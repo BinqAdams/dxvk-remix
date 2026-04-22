@@ -27,6 +27,77 @@
  * Direct3DStateBlock9_LSS Interface Implementation
  */
 
+// [PK-DIAG] Defensive wrapper for the D3DAutoPtr-holding slot copies in
+// StateTransfer. Matches the UAF-skip patch at base.h:213 (`decRef` empty
+// `m_deleter`), but handles the case where the freed object's page has been
+// unmapped (e.g. after two back-to-back World::Release events on a PainKiller
+// level change). When that happens, even the empty-deleter guard can't run —
+// the first dereference in D3DAutoPtr::reset() → incRef() AVs at
+// `mov ecx, [eax+8]` (m_fusedRefCnt).
+//
+// MSVC won't let us put __try in a function that needs C++ unwinding. Each
+// AutoPtr assignment ends up inlining operator= + temporaries → the helper
+// frame would require unwinding → C2712. Fix: make each copy a noinline
+// member function so the SEH wrapper's own body only contains flag tests,
+// for-loops over ints, and plain function calls — no local unwind deps.
+
+void Direct3DStateBlock9_LSS::pk_copy_indices(BaseDirect3DDevice9Ex_LSS::State& src,
+                                              BaseDirect3DDevice9Ex_LSS::State& dst) {
+  dst.indices = src.indices;
+}
+void Direct3DStateBlock9_LSS::pk_copy_stream(BaseDirect3DDevice9Ex_LSS::State& src,
+                                             BaseDirect3DDevice9Ex_LSS::State& dst, int i) {
+  dst.streams[i] = src.streams[i];
+}
+void Direct3DStateBlock9_LSS::pk_copy_texture(BaseDirect3DDevice9Ex_LSS::State& src,
+                                              BaseDirect3DDevice9Ex_LSS::State& dst, int i) {
+  dst.textures[i] = src.textures[i];
+  dst.textureTypes[i] = src.textureTypes[i];
+}
+void Direct3DStateBlock9_LSS::pk_copy_vertex_shader(BaseDirect3DDevice9Ex_LSS::State& src,
+                                                    BaseDirect3DDevice9Ex_LSS::State& dst) {
+  dst.vertexShader = src.vertexShader;
+}
+void Direct3DStateBlock9_LSS::pk_copy_pixel_shader(BaseDirect3DDevice9Ex_LSS::State& src,
+                                                   BaseDirect3DDevice9Ex_LSS::State& dst) {
+  dst.pixelShader = src.pixelShader;
+}
+
+// IMPORTANT: no C++ objects with destructors in this function body. The
+// logging (which implicitly creates a std::string temporary because
+// Logger::err takes `const std::string&`) must live in the CALLER, not
+// here — otherwise MSVC fires C2712 on __try with unwinding.
+bool Direct3DStateBlock9_LSS::StateTransfer_CopyAutoptrSlots_SEH(
+    const BaseDirect3DDevice9Ex_LSS::StateCaptureDirtyFlags& flags,
+    BaseDirect3DDevice9Ex_LSS::State& src,
+    BaseDirect3DDevice9Ex_LSS::State& dst) {
+  __try {
+    if (flags.indices) {
+      pk_copy_indices(src, dst);
+    }
+    for (int i = 0; i < (int) flags.streams.size(); i++) {
+      if (flags.streams[i]) {
+        pk_copy_stream(src, dst, i);
+      }
+    }
+    for (int i = 0; i < (int) flags.textures.size(); i++) {
+      if (flags.textures[i]) {
+        pk_copy_texture(src, dst, i);
+      }
+    }
+    if (flags.vertexShader) {
+      pk_copy_vertex_shader(src, dst);
+    }
+    if (flags.pixelShader) {
+      pk_copy_pixel_shader(src, dst);
+    }
+    return true;
+  } __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION
+              ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+    return false;
+  }
+}
+
 HRESULT Direct3DStateBlock9_LSS::QueryInterface(REFIID riid, LPVOID* ppvObj) {
   LogFunctionCall();
   if (ppvObj == nullptr)
@@ -78,19 +149,30 @@ void Direct3DStateBlock9_LSS::StateTransfer(const BaseDirect3DDevice9Ex_LSS::Sta
   if (flags.vertexDecl) {
     dst.vertexDecl = src.vertexDecl;
   }
-  if (flags.indices) {
-    dst.indices = src.indices;
+  // [PK-DIAG] D3DAutoPtr-holding slot copies (indices, streams[], textures[],
+  // vertexShader, pixelShader) fault on an unmapped freed-object page when
+  // the Ref::Both UAF fires and the OS has already reclaimed the page —
+  // see helper above. Non-refcounted blocks below stay outside the guard.
+  if (!StateTransfer_CopyAutoptrSlots_SEH(flags, src, dst)) {
+    static thread_local uint32_t s_pkDiagHits = 0;
+    if (s_pkDiagHits < 16) {
+      bridge_util::Logger::err(
+          "[PK-DIAG] StateTransfer: AV during autoptr copy - skipping"
+          " remainder (use-after-free/unmapped page; Ref::Both UAF, likely"
+          " post level-change)");
+      ++s_pkDiagHits;
+      if (s_pkDiagHits == 16) {
+        bridge_util::Logger::err(
+            "[PK-DIAG] StateTransfer AV: further hits silenced on this"
+            " thread");
+      }
+    }
   }
   for (int i = 0; i < flags.samplerStates.size(); i++) {
     for (int j = 0; j < flags.samplerStates[i].size(); j++) {
       if (flags.samplerStates[i][j]) {
         dst.samplerStates[i][j] = src.samplerStates[i][j];
       }
-    }
-  }
-  for (int i = 0; i < flags.streams.size(); i++) {
-    if (flags.streams[i]) {
-      dst.streams[i] = src.streams[i];
     }
   }
   for (int i = 0; i < flags.streamOffsetsAndStrides.size(); i++) {
@@ -103,18 +185,6 @@ void Direct3DStateBlock9_LSS::StateTransfer(const BaseDirect3DDevice9Ex_LSS::Sta
     if (flags.streamFreqs[i]) {
       dst.streamFreqs[i] = src.streamFreqs[i];
     }
-  }
-  for (int i = 0; i < flags.textures.size(); i++) {
-    if (flags.textures[i]) {
-      dst.textures[i] = src.textures[i];
-      dst.textureTypes[i] = src.textureTypes[i];
-    }
-  }
-  if (flags.vertexShader) {
-    dst.vertexShader = src.vertexShader;
-  }
-  if (flags.pixelShader) {
-    dst.pixelShader = src.pixelShader;
   }
   if (flags.material) {
     dst.material = src.material;
