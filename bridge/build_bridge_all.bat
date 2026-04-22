@@ -21,14 +21,11 @@ REM FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 REM DEALINGS IN THE SOFTWARE.
 REM
 
-powershell -command "& { . .\build_bridge.ps1; Build -Platform x64 -BuildFlavour debug -BuildSubDir _compDebug_x64 ; exit $LastExitCode }
-
-powershell -command "& { . .\build_bridge.ps1; Build -Platform x64 -BuildFlavour debugoptimized -BuildSubDir _compDebugOptimized_x64 ; exit $LastExitCode }
+REM PK-diag: release-only for the terminate-handler diagnostic build. The
+REM x64 build produces the server-side bridge (NvRemixBridge.exe and the
+REM server DLLs in .trex/); the x86 build produces the client-side d3d9.dll
+REM that Painkiller.exe loads as d3d9_remix.dll. Revert to full matrix when done.
 
 powershell -command "& { . .\build_bridge.ps1; Build -Platform x64 -BuildFlavour release -BuildSubDir _compRelease_x64 ; exit $LastExitCode }
-
-powershell -command "& { . .\build_bridge.ps1; Build -Platform x86 -BuildFlavour debug -BuildSubDir _compDebug_x86 ; exit $LastExitCode }
-
-powershell -command "& { . .\build_bridge.ps1; Build -Platform x86 -BuildFlavour debugoptimized -BuildSubDir _compDebugOptimized_x86 ; exit $LastExitCode }
 
 powershell -command "& { . .\build_bridge.ps1; Build -Platform x86 -BuildFlavour release -BuildSubDir _compRelease_x86 ; exit $LastExitCode }
