@@ -153,6 +153,20 @@ public:
   struct BaseDirect3DDevice9Ex_LSS::State m_captureState;
   void StateTransfer(const BaseDirect3DDevice9Ex_LSS::StateCaptureDirtyFlags& flags, BaseDirect3DDevice9Ex_LSS::State& src, BaseDirect3DDevice9Ex_LSS::State& dst);
 
+private:
+  // [PK-DIAG] SEH-guarded D3DAutoPtr-copy block. See d3d9_stateblock.cpp
+  // for rationale. Each pk_copy_* is __declspec(noinline) so the SEH wrapper's
+  // own frame has no inlined C++ unwind requirements — MSVC then accepts
+  // __try/__except there (C2712 workaround).
+  static __declspec(noinline) void pk_copy_indices(BaseDirect3DDevice9Ex_LSS::State& src, BaseDirect3DDevice9Ex_LSS::State& dst);
+  static __declspec(noinline) void pk_copy_stream(BaseDirect3DDevice9Ex_LSS::State& src, BaseDirect3DDevice9Ex_LSS::State& dst, int i);
+  static __declspec(noinline) void pk_copy_texture(BaseDirect3DDevice9Ex_LSS::State& src, BaseDirect3DDevice9Ex_LSS::State& dst, int i);
+  static __declspec(noinline) void pk_copy_vertex_shader(BaseDirect3DDevice9Ex_LSS::State& src, BaseDirect3DDevice9Ex_LSS::State& dst);
+  static __declspec(noinline) void pk_copy_pixel_shader(BaseDirect3DDevice9Ex_LSS::State& src, BaseDirect3DDevice9Ex_LSS::State& dst);
+  static bool StateTransfer_CopyAutoptrSlots_SEH(
+      const BaseDirect3DDevice9Ex_LSS::StateCaptureDirtyFlags& flags,
+      BaseDirect3DDevice9Ex_LSS::State& src,
+      BaseDirect3DDevice9Ex_LSS::State& dst);
 };
 
 #endif // D3D9_LSS_H_
