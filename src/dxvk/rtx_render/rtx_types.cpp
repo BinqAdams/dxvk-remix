@@ -25,6 +25,7 @@
 #include "rtx_asset_replacer.h"
 #include "rtx_options.h"
 #include "rtx_terrain_baker.h"
+#include <unordered_set>
 #include "rtx_instance_manager.h"
 #include "rtx_light_manager.h"
 #include "graph/rtx_graph_instance.h"
@@ -332,8 +333,8 @@ namespace dxvk {
       assert(geometryData.blendWeightBuffer.defined());
       assert(skinningData.numBonesPerVertex <= 4);
 
+      const auto fusedMode = RtxOptions::fusedWorldViewMode();
       if (pLastCamera != nullptr) {
-        const auto fusedMode = RtxOptions::fusedWorldViewMode();
         if (likely(fusedMode == FusedWorldViewMode::None)) {
           transformData.objectToView = transformData.worldToView;
           // Do not bother when transform is fused. Camera matrices are identity and so is worldToView.
@@ -341,7 +342,22 @@ namespace dxvk {
         transformData.objectToWorld = pLastCamera->getViewToWorld(false) * transformData.objectToView;
         transformData.worldToView = pLastCamera->getWorldToView(false);
       } else {
-        ONCE(Logger::warn("[RTX-Compatibility-Warn] Cannot decompose the matrices for a skinned mesh because the camera is not set."));
+        // pLastCamera is null on the first skinned draw of each frame (camera state
+        // resets to Unknown at CameraManager::onFrameEnd). Without a fallback,
+        // objectToWorld / objectToView stay at stale values and the next skinning
+        // pass transforms vertices through garbage — visually, replacement-mesh
+        // verts stretch toward world origin. Assume bones are already in world
+        // space (true for games that upload world-space bone matrices to the
+        // skinning pipeline) so objectToWorld collapses to identity, exactly
+        // matching what the pLastCamera-present branch computes when
+        // objectToView == worldToView.
+        ONCE(Logger::warn("[RTX-Compatibility-Warn] Skinned mesh finalized before camera was set — using identity objectToWorld fallback (assumes world-space bones)."));
+        if (likely(fusedMode == FusedWorldViewMode::None)) {
+          transformData.objectToView = transformData.worldToView;
+          transformData.objectToWorld = Matrix4();  // identity
+        } else {
+          transformData.objectToWorld = transformData.objectToView;
+        }
       }
 
       // In rare cases when the mesh is skinned but has only one active bone, skip the skinning pass
@@ -376,6 +392,18 @@ namespace dxvk {
     // TODO (REMIX-231): It would probably be much more efficient to use a map of texture hash to category flags, rather
     //                   than doing N lookups per texture hash for each category.
     const XXH64_hash_t& textureHash = materialData.getColorTexture().getImageHash();
+
+    // HQ-sky-under-TnL diagnostic: log first ~40 unique textureHashes reaching this path,
+    // and whether each is in rtx.skyBoxTextures. Helps identify whether sky DPs under
+    // TnL mode reach this categorization function and which hashes they carry.
+    {
+      static std::unordered_set<XXH64_hash_t> seen;
+      if (seen.size() < 40 && seen.insert(textureHash).second) {
+        const bool inSkyBox = lookupHash(RtxOptions::skyBoxTextures(), textureHash);
+        Logger::warn(str::format("[SkyDebug] setupCategoriesForTexture hash=0x",
+                                 std::hex, textureHash, " inSkyBoxTextures=", inSkyBox));
+      }
+    }
 
     setCategory(InstanceCategories::WorldUI, lookupHash(RtxOptions::worldSpaceUiTextures(), textureHash));
     setCategory(InstanceCategories::WorldMatte, lookupHash(RtxOptions::worldSpaceUiBackgroundTextures(), textureHash));
@@ -412,6 +440,17 @@ namespace dxvk {
 
   void DrawCallState::setupCategoriesForGeometry() {
     const XXH64_hash_t assetReplacementHash = getHash(RtxOptions::geometryAssetHashRule());
+
+    // HQ-sky-under-TnL diagnostic: log first ~40 unique geometry-asset hashes.
+    {
+      static std::unordered_set<XXH64_hash_t> seen;
+      if (seen.size() < 40 && seen.insert(assetReplacementHash).second) {
+        const bool inSkyGeom = lookupHash(RtxOptions::skyBoxGeometries(), assetReplacementHash);
+        Logger::warn(str::format("[SkyDebug] setupCategoriesForGeometry asset=0x",
+                                 std::hex, assetReplacementHash, " inSkyBoxGeometries=", inSkyGeom));
+      }
+    }
+
     setCategory(InstanceCategories::Sky, lookupHash(RtxOptions::skyBoxGeometries(), assetReplacementHash));
   }
 
@@ -547,6 +586,8 @@ namespace dxvk {
 
 
     if (drawCallState.minZ >= RtxOptions::skyMinZThreshold()) {
+      ONCE(Logger::warn(str::format("[SkyDebug] Classified via minZ: minZ=", drawCallState.minZ,
+                                    " >= skyMinZThreshold=", RtxOptions::skyMinZThreshold())));
       return SkyDetectionSource::Explicit;
     }
 
@@ -556,10 +597,31 @@ namespace dxvk {
 
     if (drawCallState.getMaterialData().usesTexture()) {
       if (lookupHash(RtxOptions::skyBoxTextures(), drawCallState.getMaterialData().getHash())) {
+        ONCE(Logger::warn(str::format("[SkyDebug] Classified via texture-hash: hash=0x",
+                                      std::hex, drawCallState.getMaterialData().getHash(),
+                                      " usesTexture=true")));
         return SkyDetectionSource::Explicit;
       }
     } else {
+      // HQ-sky-under-TnL diagnostic: we expect sky textures to be in skyBoxTextures,
+      // so if usesTexture() returns false for a hash that IS in the list, dump why.
+      {
+        const auto matHash = drawCallState.getMaterialData().getHash();
+        if (lookupHash(RtxOptions::skyBoxTextures(), matHash)) {
+          ONCE(Logger::warn(str::format(
+            "[SkyDebug] REJECTED: hash=0x", std::hex, matHash, " IS in skyBoxTextures, but usesTexture()=false. ",
+            "ColorTex.isValid=", drawCallState.getMaterialData().getColorTexture().isValid(),
+            " ColorTex.isImageEmpty=", drawCallState.getMaterialData().getColorTexture().isImageEmpty(),
+            " ColorTex2.isValid=", drawCallState.getMaterialData().getColorTexture2().isValid(),
+            " ColorTex2.isImageEmpty=", drawCallState.getMaterialData().getColorTexture2().isImageEmpty(),
+            " drawCallID=", drawCallState.drawCallID,
+            " minZ=", drawCallState.minZ,
+            " skyMinZThreshold=", RtxOptions::skyMinZThreshold())));
+        }
+      }
       if (drawCallState.drawCallID < RtxOptions::skyDrawcallIdThreshold()) {
+        ONCE(Logger::warn(str::format("[SkyDebug] Classified via drawCallID: drawCallID=", drawCallState.drawCallID,
+                                      " < skyDrawcallIdThreshold=", RtxOptions::skyDrawcallIdThreshold())));
         return SkyDetectionSource::Explicit;
       }
     }
@@ -586,6 +648,20 @@ namespace dxvk {
 
   void DrawCallState::setupCategoriesForHeuristics(uint32_t prevFrameSeenCamerasCount,
                                                    std::vector<Vector3>& seenCameraPositions) {
+    // HQ-sky-under-TnL diagnostic: log entry with material hash + existing Sky category.
+    {
+      static std::unordered_set<XXH64_hash_t> seen;
+      const XXH64_hash_t matHash = getMaterialData().getHash();
+      if (seen.size() < 40 && seen.insert(matHash).second) {
+        const bool skyAlreadySet = categories.test(InstanceCategories::Sky);
+        const bool inSkyBox = lookupHash(RtxOptions::skyBoxTextures(), matHash);
+        Logger::warn(str::format("[SkyDebug] setupCategoriesForHeuristics entry matHash=0x",
+                                 std::hex, matHash, " SkyAlreadySet=", skyAlreadySet,
+                                 " inSkyBoxTextures=", inSkyBox,
+                                 " usesTexture=", getMaterialData().usesTexture()));
+      }
+    }
+
     const SkyDetectionSource skySource = shouldBakeSky(*this,
                                                        futureSkinningData.valid(),
                                                        prevFrameSeenCamerasCount,

@@ -22,12 +22,15 @@
 #include "log.h"
 
 #include <iostream>
+#include <exception>   // PK-diag: std::set_terminate / std::current_exception
+#include <cstdlib>     // PK-diag: std::abort
 
 #include "../util_env.h"
 #include "../util_filesys.h"
 // NV-DXVK start: Fix some circular inclusion stuff
 #include "../util_string.h"
 // NV-DXVK end
+#include "../util_error.h"  // PK-diag: DxvkError in terminate handler
 
 
 // NV-DXVK start: Don't double print every line
@@ -186,5 +189,42 @@ namespace dxvk {
     std::swap(m_fileStream, other.m_fileStream);
     return *this;
   }
-  
+
+  // PK-diag: terminate handler so uncaught C++ exceptions get logged before
+  // the CRT hits __fastfail(FAST_FAIL_FATAL_APP_EXIT). Remix throws
+  // DxvkError (and sometimes std::runtime_error) from D3D9/RTX paths without
+  // pre-logging; without this handler the exception message is lost, and
+  // the only signal is a 0xC0000409 crash dump from Painkiller.exe.
+  //
+  // Installed via static-init on DLL load. Safe because std::set_terminate
+  // stores a function pointer and only invokes the handler on an actual
+  // terminate event (by which time Logger::s_instance is live, since Remix
+  // initRtxLog runs before any D3D9 work). The handler itself rethrows the
+  // current exception to let catch-clauses extract the typed message, then
+  // abort()s so we still land on a crash dump with a complete call stack.
+  namespace {
+    struct PkDiagTerminateInstaller {
+      PkDiagTerminateInstaller() {
+        std::set_terminate([]() {
+          try {
+            auto eptr = std::current_exception();
+            if (eptr) {
+              std::rethrow_exception(eptr);
+            } else {
+              Logger::err("[PK-DIAG] std::terminate() called with no active exception");
+            }
+          } catch (const DxvkError& e) {
+            Logger::err(std::string("[PK-DIAG] Uncaught DxvkError: ") + e.message());
+          } catch (const std::exception& e) {
+            Logger::err(std::string("[PK-DIAG] Uncaught std::exception: ") + e.what());
+          } catch (...) {
+            Logger::err("[PK-DIAG] Uncaught exception of unknown type");
+          }
+          std::abort();
+        });
+      }
+    };
+    static const PkDiagTerminateInstaller s_pkDiagInstaller;
+  }
+
 }
