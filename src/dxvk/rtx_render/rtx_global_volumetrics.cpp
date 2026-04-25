@@ -574,6 +574,7 @@ namespace dxvk {
     volumeArgs.attenuationCoefficient = volumetricAttenuationCoefficient;
     volumeArgs.enable = enable() && canUsePhysicalFog;
     volumeArgs.enableTranslucentShadows = volumeArgs.enable && enableTranslucentShadows();
+    volumeArgs.attenuateEmissivesAndApproximations = attenuateEmissivesAndApproximations() ? 1 : 0;
     volumeArgs.scatteringCoefficient = volumetricScatteringCoefficient;
     volumeArgs.enableVolumeRISInitialVisibility = enableInitialVisibility();
     volumeArgs.enablevisibilityReuse = visibilityReuse();
