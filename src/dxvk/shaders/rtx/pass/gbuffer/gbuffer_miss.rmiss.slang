@@ -48,8 +48,16 @@
 // prominent on particles in primary rays and important in PSR.
 #define RESOLVE_OPACITY_LIGHTING_APPROXIMATION 1
 
-// Note: No RESOLVER_USE_VOLUMETRIC_ATTENUATION here - we will calculate attenuation for the primary vertex
-//       during composition.  This is so we can factor in heterogenous attenuation via the global volumetrics system.
+// Note: RESOLVER_USE_VOLUMETRIC_ATTENUATION is enabled here so emissive contributions and opacity
+//       approximations accumulated in the resolve loop (and written into SharedRadiance) are
+//       pre-attenuated by the homogeneous volumetric medium. This is HOMOGENEOUS only: heterogeneous
+//       per-froxel density (rtx.volumetrics.enableHeterogeneousFog) is not factored in. The
+//       composite pass still applies its heterogeneous primary-vertex volumeAttenuation to the
+//       direct/indirect primary radiance and to the sky on miss, just not to SharedRadiance.
+//       A future heterogeneous-aware path would require a per-froxel cumulative-transmittance grid
+//       sampled at each emissive accumulation. Runtime gate:
+//       rtx.volumetrics.attenuateEmissivesAndApproximations.
+#define RESOLVER_USE_VOLUMETRIC_ATTENUATION 1
 
 #include "rtx/pass/common_binding_indices.h"
 #include "rtx/pass/common_bindings.slangh"
