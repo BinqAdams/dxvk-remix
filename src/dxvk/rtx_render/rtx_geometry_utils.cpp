@@ -266,6 +266,20 @@ namespace dxvk {
 
   void RtxGeometryUtils::dispatchSkinning(const DrawCallState& drawCallState,
                                           const RaytraceGeometry& geo) {
+    // Defensive: the upstream gate in SceneManager::processDrawCallState should
+    // already filter out skinned draws lacking a blend-weight stream, but the
+    // invariant `numBonesPerVertex > 0 ⇒ blendWeightBuffer.defined()` is not
+    // structurally enforced (the two are populated by independent code paths
+    // in D3D9Rtx::processVertices vs. processSkinning). Bail out cleanly here
+    // rather than null-deref inside isPendingGpuWrite() / mapPtr() below.
+    // Repro: D3D9 FFP indexed vertex blending where the source draw declares
+    // BLENDWEIGHT in the vertex decl but the corresponding stream is unbound
+    // at draw time (legal under D3D9; "equal weights, single index" semantics).
+    if (!drawCallState.getGeometryData().blendWeightBuffer.defined()) {
+      ONCE(Logger::warn("dispatchSkinning: skinned draw missing blendWeightBuffer; skipping skinning pass."));
+      return;
+    }
+
     const Rc<DxvkContext>& ctx = m_skinningContext;
     // Create command list for the initial skinning dispatch (e.g. The first frame we get skinning mesh draw calls)
     if (ctx->getCommandList() == nullptr) {
@@ -313,7 +327,9 @@ namespace dxvk {
     // At some point, its more efficient to do these calculations on the GPU, this limit is somewhat arbitrary however, and might require better tuning...
     const uint32_t kNumVerticesToProcessOnCPU = 256;
 
-    // Check we have appropriate CPU access
+    // Check we have appropriate CPU access. blendWeightBuffer is guaranteed
+    // defined by the early-return above; blendIndicesBuffer is optional so
+    // remains guarded with .defined() as before.
     const bool pendingGpuWrite = drawCallState.getGeometryData().positionBuffer.isPendingGpuWrite() ||
                                  drawCallState.getGeometryData().normalBuffer.isPendingGpuWrite() ||
                                  drawCallState.getGeometryData().blendWeightBuffer.isPendingGpuWrite() ||

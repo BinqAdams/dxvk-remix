@@ -1374,8 +1374,18 @@ namespace dxvk {
       m_instanceManager.notifySceneChanged();
     }
 
+    // Outer gate for GPU skinning. `numBonesPerVertex > 0` does not actually
+    // imply `blendWeightBuffer.defined()` — D3D9Rtx::processSkinning sets the
+    // bone-count purely from D3DRS_VERTEXBLEND + decl flags, while the buffer
+    // is populated only when the corresponding stream had a valid mappedSlice
+    // at processVertices time. A D3D9 FFP indexed-blend draw whose weight
+    // stream is unbound (legal: "equal weights, single bone index") leaves
+    // numBonesPerVertex set but the buffer undefined, which will null-deref
+    // inside dispatchSkinning. Add the buffer-defined check to keep the gate
+    // self-consistent (and dispatchSkinning still has its own defensive guard).
     if (drawCallState.getSkinningState().numBones > 0 &&
         drawCallState.getGeometryData().numBonesPerVertex > 0 &&
+        drawCallState.getGeometryData().blendWeightBuffer.defined() &&
         (result == ObjectCacheState::KBuildBVH || result == ObjectCacheState::kUpdateBVH)) {
       m_device->getCommon()->metaGeometryUtils().dispatchSkinning(drawCallState, pBlas->modifiedGeometryData);
       pBlas->frameLastUpdated = pBlas->frameLastTouched;
