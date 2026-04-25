@@ -2677,6 +2677,44 @@ namespace dxvk {
     }
   }
 
+  // Convert an MDL BlendType + invertedBlend pair into the equivalent Vulkan blend factors/op.
+  // Inverse of the legacy-D3D9-blend → BlendType mapping in rtx_instance_manager.cpp:629-727.
+  // Used by rasterizeSky to honor USD BlendType when useLegacyAlphaState is false.
+  static DxvkBlendMode blendModeFromBlendType(BlendType blendType, bool invertedBlend) {
+    DxvkBlendMode mode;
+    mode.enableBlending = VK_TRUE;
+    mode.colorBlendOp   = VK_BLEND_OP_ADD;
+    mode.alphaBlendOp   = VK_BLEND_OP_ADD;
+    mode.alphaSrcFactor = VK_BLEND_FACTOR_ONE;
+    mode.alphaDstFactor = VK_BLEND_FACTOR_ZERO;
+    mode.writeMask =
+      VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+      VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+
+    VkBlendFactor src = VK_BLEND_FACTOR_ONE;
+    VkBlendFactor dst = VK_BLEND_FACTOR_ZERO;
+    switch (blendType) {
+    case BlendType::kAlpha:                src = VK_BLEND_FACTOR_SRC_ALPHA;           dst = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA; break;
+    case BlendType::kAlphaEmissive:        src = VK_BLEND_FACTOR_SRC_ALPHA;           dst = VK_BLEND_FACTOR_ONE;                 break;
+    case BlendType::kReverseAlphaEmissive: src = VK_BLEND_FACTOR_ONE;                 dst = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA; break;
+    case BlendType::kColor:                src = VK_BLEND_FACTOR_SRC_COLOR;           dst = VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR; break;
+    case BlendType::kColorEmissive:        src = VK_BLEND_FACTOR_SRC_COLOR;           dst = VK_BLEND_FACTOR_ONE;                 break;
+    case BlendType::kReverseColorEmissive: src = VK_BLEND_FACTOR_ONE;                 dst = VK_BLEND_FACTOR_SRC_COLOR;           break;
+    case BlendType::kEmissive:             src = VK_BLEND_FACTOR_ONE;                 dst = VK_BLEND_FACTOR_ONE;                 break;
+    case BlendType::kMultiplicative:       src = VK_BLEND_FACTOR_DST_COLOR;           dst = VK_BLEND_FACTOR_ZERO;                break;
+    case BlendType::kDoubleMultiplicative: src = VK_BLEND_FACTOR_DST_COLOR;           dst = VK_BLEND_FACTOR_SRC_COLOR;           break;
+    case BlendType::kReverseAlpha:         src = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA; dst = VK_BLEND_FACTOR_SRC_ALPHA;           break;
+    case BlendType::kReverseColor:         src = VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR; dst = VK_BLEND_FACTOR_SRC_COLOR;           break;
+    }
+
+    if (invertedBlend) {
+      std::swap(src, dst);
+    }
+    mode.colorSrcFactor = src;
+    mode.colorDstFactor = dst;
+    return mode;
+  }
+
   void RtxContext::rasterizeSky(const DrawParameters& params, const DrawCallState& drawCallState) {
     // Grab and apply replacement texture if any
     // NOTE: only the original color texture will be replaced with albedo-opacity texture
@@ -2684,10 +2722,14 @@ namespace dxvk {
     bool replacemenIsLDR = false;
     Rc<DxvkImageView> replacementTexture = {};
     uint32_t replacementTextureSlot = UINT32_MAX;
+    bool overrideBlendState = false;
+    DxvkBlendMode newBlendMode {};
 
     if (replacementMaterial && replacementMaterial->getType() == MaterialDataType::Opaque) {
+      OpaqueMaterialData& opaqueMaterialData = replacementMaterial->getOpaqueMaterialData();
+
       // Must pull a ref because we will modify it for loading purposes below.
-      TextureRef& albedoOpacity = replacementMaterial->getOpaqueMaterialData().getAlbedoOpacityTexture();
+      TextureRef& albedoOpacity = opaqueMaterialData.getAlbedoOpacityTexture();
 
       if (albedoOpacity.isValid()) {
         uint32_t textureIndex;
@@ -2701,8 +2743,32 @@ namespace dxvk {
           ONCE(Logger::warn("A replacement texture for sky was specified, but it could not be loaded."));
         }
       }
+
+      // When the replacement disables legacy alpha state, honor the USD BlendType for the cubemap
+      // composite so dark pixels of an emissive/alpha-blended sky element do not overwrite the
+      // underlying sky probe content. With useLegacyAlphaState=true (the MDL default) we keep the
+      // existing behavior of inheriting the original D3D9 draw call's blend state.
+      if (!opaqueMaterialData.getUseLegacyAlphaState()) {
+        if (opaqueMaterialData.getBlendEnabled()) {
+          newBlendMode = blendModeFromBlendType(
+            opaqueMaterialData.getBlendType(),
+            opaqueMaterialData.getInvertedBlend());
+        } else {
+          newBlendMode.enableBlending = VK_FALSE;
+          newBlendMode.colorSrcFactor = VK_BLEND_FACTOR_ONE;
+          newBlendMode.colorDstFactor = VK_BLEND_FACTOR_ZERO;
+          newBlendMode.colorBlendOp   = VK_BLEND_OP_ADD;
+          newBlendMode.alphaSrcFactor = VK_BLEND_FACTOR_ONE;
+          newBlendMode.alphaDstFactor = VK_BLEND_FACTOR_ZERO;
+          newBlendMode.alphaBlendOp   = VK_BLEND_OP_ADD;
+          newBlendMode.writeMask =
+            VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+            VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        }
+        overrideBlendState = true;
+      }
     }
-    
+
     Rc<DxvkImageView> curColorView = {};
     if (replacementTextureSlot < m_rc.size())
     {
@@ -2726,10 +2792,30 @@ namespace dxvk {
     const uint32_t curViewportCount = m_state.gp.state.rs.viewportCount();
     const DxvkViewportState curVp = m_state.vp;
 
+    // Save and override blend state if the replacement material opted out of legacy alpha state.
+    DxvkBlendMode prevBlendMode {};
+    if (overrideBlendState) {
+      const DxvkOmAttachmentBlend& curBlend = m_state.gp.state.omBlend[0];
+      prevBlendMode.enableBlending = curBlend.blendEnable();
+      prevBlendMode.colorSrcFactor = curBlend.srcColorBlendFactor();
+      prevBlendMode.colorDstFactor = curBlend.dstColorBlendFactor();
+      prevBlendMode.colorBlendOp   = curBlend.colorBlendOp();
+      prevBlendMode.alphaSrcFactor = curBlend.srcAlphaBlendFactor();
+      prevBlendMode.alphaDstFactor = curBlend.dstAlphaBlendFactor();
+      prevBlendMode.alphaBlendOp   = curBlend.alphaBlendOp();
+      prevBlendMode.writeMask      = curBlend.colorWriteMask();
+      setBlendMode(0, newBlendMode);
+    }
+
     rasterizeToSkyMatte(params, drawCallState);
     rasterizeToSkyProbe(params, drawCallState);
 
     m_skyClearDirty = false;
+
+    // Restore blend state
+    if (overrideBlendState) {
+      setBlendMode(0, prevBlendMode);
+    }
 
     // Restore VPs
     setViewports(curViewportCount, curVp.viewports.data(), curVp.scissorRects.data());
