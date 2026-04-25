@@ -306,6 +306,9 @@ void ProcessDeviceCommandQueue() {
       }
 #endif
       // The mother of all switch statements - every call in the D3D9 interface is mapped here...
+      // NOTE: wrapped in try/catch to prevent a single failed D3D9 call (e.g. dxvk::DxvkError
+      // thrown from the skinning/staging path in d3d9.dll) from terminating NvRemixBridge.
+      try {
       switch (rpcHeader.command) {
       case IDirect3D9Ex_CreateDeviceEx:
       {
@@ -3165,6 +3168,18 @@ void ProcessDeviceCommandQueue() {
       
       default:
         break;
+      }
+      } catch (...) {
+        // Swallow any C++ exception escaping a D3D9 call (most notably dxvk::DxvkError
+        // from D3D9Rtx::processSkinning's "Bones temp storage is too small." guard).
+        // Without this catch the exception propagates up through ProcessDeviceCommandQueue
+        // and wWinMain, killing NvRemixBridge.exe. The failing command is effectively
+        // dropped for this frame; the command queue continues.
+        // NOTE: MSVC /EHsc (the default) makes catch(...) match only C++ exceptions,
+        // not SEH (access violations etc.), so real crashes still surface normally.
+        Logger::err(format_string(
+          "[ProcessDeviceCommandQueue] C++ exception during command %s (UID %u) - command dropped, continuing.",
+          toString(rpcHeader.command).c_str(), currentUID));
       }
     }
 
