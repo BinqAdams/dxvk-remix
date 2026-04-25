@@ -45,13 +45,18 @@
 #define OPAQUE_MATERIAL_USE_THIN_FILM 1
 #define OPAQUE_MATERIAL_USE_POM 1
 
-#ifdef GBUFFER_PSR
-// Note: This is done in primary rays only currently so that attenuation from volumetrics can be factored in
-// similar to how it was done previously when it was simply applied in compositing via the total virtual hit
-// distance, and ensuring that it does not attenuate secondary rays (since they do not receive inscattering and
-// attenuating them would cause large amounts of energy loss as a result).
+// Note: Per-segment volumetric attenuation applied inside the resolve loop. Enabled for both PSR
+// and non-PSR primary ray paths so that emissive contributions and opacity approximations
+// accumulated into SharedRadiance are pre-attenuated through the homogeneous volumetric medium.
+// This is HOMOGENEOUS only (calcVolumetricAttenuation does not sample per-froxel density used by
+// rtx.volumetrics.enableHeterogeneousFog). The composite pass still applies its heterogeneous
+// primary-vertex volumeAttenuation to remodulatedTotalPrimaryRadiance / Secondary / sky on miss,
+// just not to SharedRadiance. Secondary indirect rays already define this macro in their own
+// closesthit/miss/raygen so their per-segment attenuation behavior is unchanged. The runtime flag
+// rtx.volumetrics.attenuateEmissivesAndApproximations gates this so it can be disabled when the
+// homogeneous approximation is undesirable. A future heterogeneous-aware implementation would
+// require a per-froxel cumulative-transmittance grid sampled at each emissive accumulation.
 #define RESOLVER_USE_VOLUMETRIC_ATTENUATION 1
-#endif
 
 #include "rtx/pass/common_binding_indices.h"
 #include "rtx/pass/common_bindings.slangh"

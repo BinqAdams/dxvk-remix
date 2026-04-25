@@ -191,6 +191,11 @@ namespace dxvk {
     RTX_OPTION_FLAG("rtx.volumetrics", bool, debugDisableRadianceScaling, false, RtxOptionFlags::NoSave,
                "Disables the volumetric radiance scaling feature, this effectively sets the per light radiance scaling to 1.f.  Useful when debugging issues when this feature is suspected.\n"
                "Do not ship your mod with this in the rtx.conf.");
+    RTX_OPTION("rtx.volumetrics", bool, attenuateEmissivesAndApproximations, true,
+               "Enables per-source homogeneous volumetric attenuation of emissive surface contributions and opacity-approximated hits (e.g. emissive blend modes, particle approximations) inside the geometry resolver and the indirect path tracer.\n"
+               "When enabled, emissives accumulated into SharedRadiance are pre-attenuated by the Beer-Lambert transmittance through the global homogeneous medium for the camera-to-source distance, so they correctly dim through fog rather than punching through it.\n"
+               "Limitation: This uses only the GLOBAL HOMOGENEOUS extinction (rtx.volumetrics.transmittanceColor / transmittanceMeasurementDistanceMeters / atmosphere parameters). It does NOT factor in heterogeneous per-froxel density variation from rtx.volumetrics.enableHeterogeneousFog. A heterogeneous-aware implementation would require sampling a per-froxel cumulative-transmittance grid produced by a new pre-bake pass; that work is deferred.\n"
+               "Disable this if the homogeneous approximation produces visibly wrong attenuation in scenes with strong heterogeneous fog density variation, or to compare against the legacy unattenuated behavior.");
 
     // Note: Options for remapping legacy D3D9 fixed function fog parameters to volumetric lighting parameters and overwriting the global volumetric parameters when fixed function fog is enabled.
     // Useful for cases where dynamic fog parameters are used throughout a game (or very per-level) that cannot be captrued merely in a global set of volumetric parameters. To see remapped results
