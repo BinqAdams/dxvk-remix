@@ -97,7 +97,13 @@ struct VolumeArgs {
 
   float maxAttenuationDistanceForNoAtmosphere;
   uint resetHistory;
-  vec2 pad0;
+  // Runtime gate for per-source homogeneous volumetric attenuation of emissive contributions and
+  // opacity approximations inside the geometry resolver / indirect path tracer. See
+  // resolve.slangh's RESOLVER_USE_VOLUMETRIC_ATTENUATION block and the RtxOption
+  // rtx.volumetrics.attenuateEmissivesAndApproximations.
+  uint16_t attenuateEmissivesAndApproximations;
+  uint16_t pad1;
+  float pad0;
 };
 
 #ifdef __cplusplus

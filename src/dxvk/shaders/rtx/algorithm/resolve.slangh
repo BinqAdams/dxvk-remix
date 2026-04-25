@@ -296,9 +296,24 @@ void resolveVertexFinalMiss<let overrideRayInteraction : bool, T : IBasePayloadS
 
   // Account for attenuation on miss
   // Note: This is important for any effects which apply after miss, such as potential future skybox effects.
+  // Note: The per-segment volumetric attenuation below uses calcVolumetricAttenuation, which is HOMOGENEOUS
+  //       only (global extinction parameters). It does NOT factor in heterogeneous per-froxel density
+  //       (rtx.volumetrics.enableHeterogeneousFog). A correct heterogeneous version would require
+  //       sampling a per-froxel cumulative-transmittance grid produced by a new pre-bake pass; deferred
+  //       as future work. For PRIMARY rays the runtime flag
+  //       rtx.volumetrics.attenuateEmissivesAndApproximations gates this newly-enabled behavior so it
+  //       can be disabled if the homogeneous approximation is visually undesirable. For indirect rays
+  //       (RAY_TRACING_PRIMARY_RAY undefined) the attenuation is always applied as it always has been.
 #ifdef RESOLVER_USE_VOLUMETRIC_ATTENUATION
+#ifdef RAY_TRACING_PRIMARY_RAY
+  if (cb.volumeArgs.attenuateEmissivesAndApproximations != 0)
+  {
+    radianceAttenuation *= calcVolumetricAttenuation(cb.volumeArgs, none, true, 0.0f, resolveVertexState.origin, resolveVertexState.direction);
+  }
+#else
   radianceAttenuation *= calcVolumetricAttenuation(cb.volumeArgs, none, true, 0.0f, resolveVertexState.origin, resolveVertexState.direction);
-#else 
+#endif
+#else
   unused(radianceAttenuation);
 #endif
 }
@@ -362,9 +377,26 @@ void resolveVertex<T: IBasePayloadState>(
   // Apply Volumetric attenuation for this resolve segment
   // Note: Volume attenuation can be calculated on a per-segment basis here rather than all at once in compositing
   // as e^x * e^y (where x/y are hit distances) is the same as e^(x + y).
+  // Note: This is HOMOGENEOUS attenuation only (calcVolumetricAttenuation uses the global extinction
+  //       parameters and does NOT sample the per-froxel density field used by
+  //       rtx.volumetrics.enableHeterogeneousFog). For non-PSR primary rays this used to be intentionally
+  //       skipped so that the composite pass could apply heterogeneous attenuation per pixel, but the
+  //       composite never applied it to SharedRadiance, so emissive surfaces were not attenuated by
+  //       volumetrics at all. Enabling this here gives correct per-source attenuation for the
+  //       homogeneous component; a future pass producing per-froxel cumulative transmittance would
+  //       allow the heterogeneous component too. For PRIMARY rays the runtime flag
+  //       rtx.volumetrics.attenuateEmissivesAndApproximations gates this newly-enabled behavior; for
+  //       indirect rays (RAY_TRACING_PRIMARY_RAY undefined) it is always applied as it always has been.
 
 #ifdef RESOLVER_USE_VOLUMETRIC_ATTENUATION
+#ifdef RAY_TRACING_PRIMARY_RAY
+  if (cb.volumeArgs.attenuateEmissivesAndApproximations != 0)
+  {
+    radianceAttenuation *= calcVolumetricAttenuation(cb.volumeArgs, none, false, rayHitInfo.hitDistance, ray.origin, ray.direction);
+  }
+#else
   radianceAttenuation *= calcVolumetricAttenuation(cb.volumeArgs, none, false, rayHitInfo.hitDistance, ray.origin, ray.direction);
+#endif
 #endif
   
   // Create a Surface and Surface Interaction from the hit
