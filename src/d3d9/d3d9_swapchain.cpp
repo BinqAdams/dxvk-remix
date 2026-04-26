@@ -864,6 +864,40 @@ namespace dxvk {
     D3D9DeviceLock lock = m_parent->LockDevice();
 
     this->SynchronizePresent();
+
+    // [PK] Re-anchor m_originalWidth/Height to the new BackBuffer dims
+    // before NormalizePresentParameters runs. Without this, m_originalWidth
+    // is permanently the dims of the very first CreateDevice (pinned in the
+    // ctor at lines 327-328 with no other writers tree-wide). After a Reset
+    // to a different size, NormalizePresentParameters at lines 1110-1111
+    // computes m_widthScale = NEW_BB_W / FIRST_BB_W (not 1.0). That scale
+    // multiplies every D3DVIEWPORT9 rect inside D3D9DeviceEx::SetViewport
+    // (d3d9_device.cpp:1786-1789), producing a Vulkan viewport that
+    // overflows the backbuffer attachment — the visible result is the
+    // top-left quadrant of the rendered scene with the rest clipped.
+    //
+    // Empirical case that triggers it: Painkiller's GraphicsDevice::Init
+    // creates a device at hardcoded 640x480, then later Resets to the
+    // user-chosen resolution — m_widthScale becomes 2.0 for 1280x960
+    // and the in-game menu/HUD/BIK is clipped to the top-left.
+    //
+    // Preserve the DXVK_RESOLUTION_WIDTH/HEIGHT upscale feature
+    // (NormalizePresentParameters lines 1104-1108): when those env vars
+    // are set, the engine-supplied BackBufferWidth/Height is OVERWRITTEN
+    // by the env-var values to produce an intentional upscale ratio. In
+    // that case we must NOT re-anchor m_originalWidth, because the whole
+    // point of the env-var path is `m_widthScale = ENV_W / m_originalW`
+    // != 1.0. So gate the re-anchor on env vars being empty.
+    const bool isDxvkResolutionEnvSet =
+         env::getEnvVar("DXVK_RESOLUTION_WIDTH")  != ""
+      || env::getEnvVar("DXVK_RESOLUTION_HEIGHT") != "";
+    if (!isDxvkResolutionEnvSet && pPresentParams != nullptr
+        && pPresentParams->BackBufferWidth  > 0
+        && pPresentParams->BackBufferHeight > 0) {
+      m_originalWidth  = pPresentParams->BackBufferWidth;
+      m_originalHeight = pPresentParams->BackBufferHeight;
+    }
+
     this->NormalizePresentParameters(pPresentParams);
 
     m_dirty    |= m_presentParams.BackBufferFormat   != pPresentParams->BackBufferFormat
