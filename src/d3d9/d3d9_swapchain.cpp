@@ -336,6 +336,33 @@ namespace dxvk {
     , m_originalWidth(pPresentParams->BackBufferWidth)
     , m_originalHeight(pPresentParams->BackBufferHeight) {
     this->NormalizePresentParameters(pPresentParams);
+
+    // [PK] If the caller passed BB=0 (D3D9 auto-mode), the init list above
+    // captured 0 into m_originalWidth/Height — and NormalizePresentParameters
+    // just filled the BB fields from GetWindowClientSize and computed
+    // m_widthScale = NEW_BB / m_originalWidth = NEW_BB / 0 = Inf. That Inf
+    // propagates into D3D9DeviceEx::SetViewport's per-rect multiply, making
+    // the device init's first SetViewport produce a NaN/Inf VkViewport
+    // and CreateDevice fail with D3DERR_NOTAVAILABLE.
+    //
+    // Re-anchor here using the post-Normalize values, then recompute the
+    // scale factors. This matches the same re-anchor we already do in Reset
+    // (where it handles resolution changes). Gate on the
+    // DXVK_RESOLUTION_WIDTH/HEIGHT env vars being empty so the upscale
+    // feature is preserved.
+    const bool isDxvkResolutionEnvSet =
+         env::getEnvVar("DXVK_RESOLUTION_WIDTH")  != ""
+      || env::getEnvVar("DXVK_RESOLUTION_HEIGHT") != "";
+    if (!isDxvkResolutionEnvSet
+        && pPresentParams->BackBufferWidth  > 0
+        && pPresentParams->BackBufferHeight > 0
+        && (m_originalWidth == 0 || m_originalHeight == 0)) {
+      m_originalWidth  = pPresentParams->BackBufferWidth;
+      m_originalHeight = pPresentParams->BackBufferHeight;
+      m_widthScale  = 1.0f;
+      m_heightScale = 1.0f;
+    }
+
     m_presentParams = *pPresentParams;
     m_window = m_presentParams.hDeviceWindow;
 
