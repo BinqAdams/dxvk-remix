@@ -213,10 +213,36 @@ protected:
       if (!m_deleter) {
         static thread_local uint32_t s_pkDiagHits = 0;
         if (s_pkDiagHits < 16) {  // rate-limit log flood
-          bridge_util::Logger::err(bridge_util::format_string(
-            "[PK-DIAG] decRef: empty m_deleter on object %p, fusedCnt=0x%llx"
-            " - skipping deleter (use-after-free survived, object already dead)",
-            this, static_cast<unsigned long long>(fusedCnt)));
+          // On the FIRST hit (per thread), capture the caller chain so we
+          // can pinpoint the loop that's hammering decRef on already-dead
+          // objects. With Both==Interface aliasing and the existing
+          // workaround turning the crash into a leak, the stack trace is
+          // the only thing that uniquely identifies the offending site.
+          // Subsequent hits in the same silence window are typically the
+          // same loop iterating, so we don't bother re-capturing.
+          if (s_pkDiagHits == 0) {
+            void* frames[8] = {};
+            USHORT n = RtlCaptureStackBackTrace(1u, 8u, frames, nullptr);
+            char framebuf[256];
+            int len = 0;
+            for (USHORT i = 0; i < n && len < (int)(sizeof(framebuf) - 32); i++) {
+              len += snprintf(framebuf + len, sizeof(framebuf) - len,
+                              "%s%p", i == 0 ? "" : "<-", frames[i]);
+            }
+            if (n == 0) {
+              framebuf[0] = '?'; framebuf[1] = '\0';
+            }
+            bridge_util::Logger::err(bridge_util::format_string(
+              "[PK-DIAG] decRef: empty m_deleter on object %p, fusedCnt=0x%llx"
+              " - skipping deleter (use-after-free survived, object already dead)"
+              " stack: %s",
+              this, static_cast<unsigned long long>(fusedCnt), framebuf));
+          } else {
+            bridge_util::Logger::err(bridge_util::format_string(
+              "[PK-DIAG] decRef: empty m_deleter on object %p, fusedCnt=0x%llx"
+              " - skipping deleter (use-after-free survived, object already dead)",
+              this, static_cast<unsigned long long>(fusedCnt)));
+          }
           ++s_pkDiagHits;
           if (s_pkDiagHits == 16) {
             bridge_util::Logger::err("[PK-DIAG] decRef empty-deleter: further hits silenced on this thread");
