@@ -880,6 +880,25 @@ namespace dxvk {
     D3D9DeviceLock lock = m_parent->LockDevice();
 
     this->SynchronizePresent();
+
+    // [PK] Re-anchor m_originalWidth/Height to the new BackBuffer dims
+    // before NormalizePresentParameters runs. Mirrors the same fix in
+    // D3D9SwapChainEx::Reset (search for "[PK] Re-anchor" in this file).
+    // D3D9SwapchainExternal extends D3D9SwapChainEx and overrides Reset,
+    // so without duplicating the re-anchor here the bridge / RemixAPI
+    // path leaves m_originalWidth pinned at the first CreateDevice's
+    // value, producing the 2D zoom-into-top-left symptom on every Reset
+    // to a different size. Painkiller's bridge swap chain hits this path.
+    const bool isDxvkResolutionEnvSet =
+         env::getEnvVar("DXVK_RESOLUTION_WIDTH")  != ""
+      || env::getEnvVar("DXVK_RESOLUTION_HEIGHT") != "";
+    if (!isDxvkResolutionEnvSet && pPresentParams != nullptr
+        && pPresentParams->BackBufferWidth  > 0
+        && pPresentParams->BackBufferHeight > 0) {
+      m_originalWidth  = pPresentParams->BackBufferWidth;
+      m_originalHeight = pPresentParams->BackBufferHeight;
+    }
+
     this->NormalizePresentParameters(pPresentParams);
 
     if (pPresentParams->hDeviceWindow != nullptr && m_window != pPresentParams->hDeviceWindow) {
