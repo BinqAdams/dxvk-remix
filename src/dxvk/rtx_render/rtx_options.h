@@ -1016,6 +1016,10 @@ namespace dxvk {
                "The maximum number of samples to use when anisotropic filtering is enabled.\n"
                "The actual max anisotropy used will be the minimum between this value and the hardware's maximum. Higher values increase quality but will likely reduce performance.");
     RTX_OPTION_ENV("rtx", bool, enableMultiStageTextureFactorBlending, true, "RTX_ENABLE_MULTI_STAGE_TEXTURE_FACTOR_BLENDING", "Support texture factor blending in stage 1~7. Currently only support 1 additional blending stage, more than 1 additional blending stages will be ignored.");
+    RTX_OPTION("rtx", bool, applyLightmapSkipToProgrammableShaderDraws, false,
+               "When enabled, textures listed in rtx.lightmapTextures are also skipped from colorTextures[0] selection on draw calls that use a programmable pixel shader (the default code path only applies the skip to fixed-function draws).\n"
+               "Useful for games that bind a tiny placeholder texture (e.g. a fully-transparent 8x8) to stage 0 of a multi-stage programmable-shader effect, causing material replacement to key on the placeholder instead of the real content texture on a later stage.\n"
+               "When this option skips a stage, color-texture selection walks subsequent stages (up to caps::TextureStageCount) until a non-skipped texture is found, mirroring the fixed-function behavior.");
 
     // Developer Options
     RTX_OPTION_FLAG_ENV("rtx", bool, enableBreakIntoDebuggerOnPressingB, false, RtxOptionFlags::NoSave, "RTX_BREAK_INTO_DEBUGGER_ON_PRESSING_B",
