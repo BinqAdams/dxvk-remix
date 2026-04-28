@@ -1055,13 +1055,29 @@ namespace dxvk {
 
     // Find the ideal textures for raytracing, initialize the data to invalid (out of range) to unbind unused textures
     uint32_t firstStage = 0;
-    for (uint32_t idx = 0, textureID = 0; idx < NumTexcoordBins && textureID < LegacyMaterialData::kMaxSupportedTextures; idx++) {
-      const uint8_t stage = FixedFunction ? texcoordIndexToStage[idx] : textureID;
+    // Programmable-PS path may walk past kMaxSupportedTextures stages when applyLightmapSkipToProgrammableShaderDraws
+    // is enabled, since stages whose hash is in rtx.lightmapTextures are skipped without consuming a textureID slot.
+    const uint32_t kSelectionStageLimit = FixedFunction
+        ? NumTexcoordBins
+        : (RtxOptions::applyLightmapSkipToProgrammableShaderDraws() ? caps::TextureStageCount : LegacyMaterialData::kMaxSupportedTextures);
+    for (uint32_t idx = 0, textureID = 0; idx < kSelectionStageLimit && textureID < LegacyMaterialData::kMaxSupportedTextures; idx++) {
+      const uint8_t stage = FixedFunction ? texcoordIndexToStage[idx] : static_cast<uint8_t>(idx);
       if (stage == kInvalidStage || d3d9State().textures[stage] == nullptr)
         continue;
 
       D3D9CommonTexture* pTexInfo = GetCommonTexture(d3d9State().textures[stage]);
       assert(pTexInfo != nullptr);
+
+      // Mirror the FF-only lightmap skip on the programmable-PS path when the option is enabled,
+      // so games that put a placeholder on stage 0 of a multi-stage programmable shader can hash
+      // against the real content on a later stage. Default-off to preserve existing behavior.
+      if constexpr (!FixedFunction) {
+        if (RtxOptions::applyLightmapSkipToProgrammableShaderDraws()) {
+          const XXH64_hash_t texHash = pTexInfo->GetSampleView(true)->image()->getHash();
+          if (lookupHash(RtxOptions::lightmapTextures(), texHash))
+            continue;
+        }
+      }
 
       // Send the texture stage state for first texture slot (or 0th stage if no texture)
       if (textureID == 0) {
@@ -1072,7 +1088,7 @@ namespace dxvk {
           return false;
         }
 
-        if (FixedFunction) {
+        if (FixedFunction || RtxOptions::applyLightmapSkipToProgrammableShaderDraws()) {
           firstStage = stage;
         }
       }
