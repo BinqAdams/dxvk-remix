@@ -42,7 +42,10 @@ struct OpaqueMaterialArgs {
   uint enableThinFilmOverride = 0;
   // Note: This thickness value is normalized on 0-1, predivided by the thinFilmMaxThickness on the CPU.
   float thinFilmNormalizedThicknessOverride = 0.0;
-  uint pad0 = 0;
+  // When non-zero, the GPU samples the secondary texture (typically game stage 2) at the primary texcoord
+  // and multiplies its red channel into opacity for legacy/replacement opaque materials. See
+  // OpaqueMaterialOptions::legacyOpacityFromSecondaryTexture.
+  uint legacyOpacityFromSecondaryTexture = 0;
   uint pad1 = 0;
 };
 
@@ -106,6 +109,11 @@ struct OpaqueMaterialOptions {
              "The thin-film layer's thickness in nanometers for the opaque material when the thin-film override is enabled.\n"
              "Should be any value larger than 0, typically within the wavelength of light, but must be less than or equal to OPAQUE_SURFACE_MATERIAL_THIN_FILM_MAX_THICKNESS (" STRINGIFY(OPAQUE_SURFACE_MATERIAL_THIN_FILM_MAX_THICKNESS) " nm).\n"
              "Should only be used for debugging or development.");
+  RTX_OPTION("rtx.opaqueMaterial", bool, legacyOpacityFromSecondaryTexture, false,
+             "When enabled, the secondary texture slot (game stage 2 / colorTextures[1]) is forwarded into the replacement opaque material and multiplied into per-pixel opacity in the surface shader.\n"
+             "Useful for games whose original multi-stage pixel shader applies a stage-2 mask that is otherwise dropped when a replacement material is bound (e.g. Painkiller HQ sky cloud cookie-cutter masks under BC6u HDR replacement).\n"
+             "Caveats: (1) the secondary texture is sampled at the PRIMARY texcoord index, so any independent UV transform on the original mask stage is lost. (2) the option also affects non-replaced legacy opaque materials that have a stage-2 texture bound, since the secondary texture is plumbed through for those by default — enable only when needed.\n"
+             "Implementation: see opaque_surface_material_interaction.slangh for the GPU-side sample, and rtx_materials.h::mergeLegacyMaterial for the CPU-side forwarding when a replacement is active.");
 
 public:
   static void fillShaderParams(OpaqueMaterialArgs& args) {
@@ -124,6 +132,7 @@ public:
     args.enableThinFilmOverride = enableThinFilmOverride();
     // Note: GPU expects the thin film thickness override to be normalized on the maximum range.
     args.thinFilmNormalizedThicknessOverride = std::clamp(thinFilmThicknessOverride() / OPAQUE_SURFACE_MATERIAL_THIN_FILM_MAX_THICKNESS, 0.0f, 1.0f);
+    args.legacyOpacityFromSecondaryTexture = legacyOpacityFromSecondaryTexture() ? 1u : 0u;
   }
 };
 
