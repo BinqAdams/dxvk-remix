@@ -32,6 +32,8 @@
 #include "rtx/concept/surface/surface_shared.h"
 #include "rtx/pass/common_binding_indices.h"
 #include "rtx/pass/instance_definitions.h"
+#include "rtx/utility/shader_types.h"
+#include "rtx/pass/material_args.h"
 #include "../../dxso/dxso_util.h"
 #include "rtx_material_data.h"
 #include "../../lssusd/mdl_helpers.h"
@@ -1948,6 +1950,13 @@ struct MaterialData {
       if constexpr (std::is_same_v<T, OpaqueMaterialData>) {
         OpaqueMaterialData tmp;
         tmp.getAlbedoOpacityTexture() = input.getColorTexture();
+        // NV-DXVK BEGIN: forward game-side secondary texture (colorTextures[1] / typically stage 2 mask)
+        // into the replacement material so the GPU shader can optionally multiply opacity by it.
+        // Gated on rtx.opaqueMaterial.legacyOpacityFromSecondaryTexture so default behavior is unchanged.
+        if (OpaqueMaterialOptions::legacyOpacityFromSecondaryTexture() && input.getColorTexture2().isValid()) {
+          tmp.getSecondaryTexture() = input.getColorTexture2();
+        }
+        // NV-DXVK END
         if (auto s = input.getSampler().ptr()) {
           tmp.getFilterMode() = lss::Mdl::Filter::vkToMdl(s->info().magFilter);
           tmp.getWrapModeU() = lss::Mdl::WrapMode::vkToMdl(s->info().addressModeU);

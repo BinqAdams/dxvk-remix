@@ -674,6 +674,31 @@ OpaqueSurfaceMaterialInteraction opaqueSurfaceMaterialInteractionCreate(
     }
   }
 
+  // NV-DXVK BEGIN: secondary-texture opacity mask for legacy multi-stage shaders.
+  // When rtx.opaqueMaterial.legacyOpacityFromSecondaryTexture is enabled and the material has a
+  // valid secondary texture (e.g. game stage 2 cookie-cutter mask forwarded via mergeLegacyMaterial),
+  // sample it at the primary texcoord and multiply min(R, A) into opacity. Using min(R, A) handles
+  // the two common D3D9 cookie-mask conventions: alpha-only masks (R=G=B=1, A=mask, e.g.
+  // Painkiller _bulb_masker / C2L3_AsylumSkyCloudsMask) AND luminance-only masks (R=mask, A=1).
+  // This lets BC6u HDR replacement albedos preserve the original game's mask behavior. Note: the
+  // secondary sample uses the SAME texcoord as the primary; any independent UV transform on the
+  // original mask stage is lost.
+  if (cb.opaqueMaterialArgs.legacyOpacityFromSecondaryTexture != 0)
+  {
+    f16vec4 secondaryOpacitySample;
+    const bool secondaryOpacityLoaded = surfaceMaterialInteractionTextureReadHelper(
+      opaqueSurfaceMaterial.secondaryTextureIndex,
+      opaqueSurfaceMaterial.samplerIndex,
+      surfaceInteraction,
+      secondaryOpacitySample);
+    if (secondaryOpacityLoaded)
+    {
+      const float16_t maskValue = min(secondaryOpacitySample.r, secondaryOpacitySample.a);
+      opacity *= maskValue;
+    }
+  }
+  // NV-DXVK END
+
 #if defined(RAY_TRACING_PRIMARY_RAY)
   if (cb.debugView == DEBUG_VIEW_RAW_ALBEDO) 
   {
