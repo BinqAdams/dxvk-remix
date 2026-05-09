@@ -702,7 +702,10 @@ namespace dxvk {
 
   void OpacityMicromapManager::seedCandidates(const std::vector<RtInstance*>& instances) {
     for (RtInstance* inst : instances) {
-      if (inst && !inst->isMarkedForGC()) {
+      // Skip renderer-created instances: InstanceManager::removeInstance
+      // skips onInstanceDestroyedCallback for them (rtx_instance_manager.cpp:1283),
+      // so the pointer would dangle if we tracked it.
+      if (inst && !inst->isMarkedForGC() && !inst->isCreatedByRenderer()) {
         m_ommCandidates.insert(inst);
       }
     }
@@ -1341,7 +1344,8 @@ namespace dxvk {
     std::vector<RtInstance*> retryCandidates;
 
     auto keepCandidateForRetry = [this](RtInstance* inst) {
-      if (inst && !inst->isMarkedForGC()) {
+      // See seedCandidates() for why m_isCreatedByRenderer is filtered out.
+      if (inst && !inst->isMarkedForGC() && !inst->isCreatedByRenderer()) {
         m_ommCandidates.insert(inst);
       }
     };
@@ -1534,7 +1538,8 @@ namespace dxvk {
     }
 
     for (RtInstance* inst : retryCandidates) {
-      if (!inst->isMarkedForGC()) {
+      // See seedCandidates() for why m_isCreatedByRenderer is filtered out.
+      if (!inst->isMarkedForGC() && !inst->isCreatedByRenderer()) {
         m_ommCandidates.insert(inst);
       }
     }
