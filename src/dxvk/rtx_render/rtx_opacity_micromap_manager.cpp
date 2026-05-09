@@ -546,9 +546,15 @@ namespace dxvk {
 
     m_instanceOmmRequests.clear();
 
-    // Note: m_ommCandidates is intentionally NOT cleared here. It tracks
-    // instances that need a retry, while processOmmCandidates() also scans
-    // the instance table for stale generation data after this generation bump.
+    // m_ommCandidates holds raw RtInstance* keys. Painkiller's level change
+    // (and any other path that bulk-destroys RtInstances without calling
+    // InstanceManager::removeInstance per-instance — see the early return
+    // at rtx_instance_manager.cpp:1283-1285 for renderer-created instances)
+    // leaves dangling pointers in this set, faulting the next OMM scan.
+    // Generation-bump alone is not enough — checking generation requires
+    // dereferencing the stale RtInstance pointer. Drop the retry queue and
+    // accept the (minor) frames of OMM staleness post-level-change.
+    m_ommCandidates.clear();
 
     m_ommGeneration++;
 
