@@ -37,19 +37,19 @@ namespace dxvk {
     RTX_OPTION("rtx.dust", bool, enable, false, "Enables dust particle simulation and rendering.");
     RTX_OPTION("rtx.dust", int, numberOfParticles, 1000000, "Maximum number of particles to simulate simultaneously.");
     RTX_OPTION("rtx.dust", float, timeScale, 1.f, "Time modifier, can be used to slow/speed up time.");
-    RTX_OPTION("rtx.dust", float, minSpawnDistance, 20.f, "Minimum distance in world space from camera to spawn particles.");
-    RTX_OPTION("rtx.dust", float, maxSpawnDistance, 400.f, "Maximum distance in world space from camera to spawn particles.");
+    RTX_OPTION("rtx.dust", float, minSpawnDistance, 20.f, "Minimum distance from camera to spawn particles, in centimeters (scaled by rtx.sceneScale at use).");
+    RTX_OPTION("rtx.dust", float, maxSpawnDistance, 400.f, "Maximum distance from camera to spawn particles, in centimeters (scaled by rtx.sceneScale at use).");
     RTX_OPTION("rtx.dust", float, minParticleLife, 3.f, "Minimum lifetime (in seconds) to give to a particle when spawned.");
     RTX_OPTION("rtx.dust", float, maxParticleLife, 6.f, "Maximum lifetime (in seconds) to give to a particle when spawned.");
     RTX_OPTION("rtx.dust", float, minParticleSize, 1.f, "Minimum size (in pixels) to give to a particle when spawned.");
     RTX_OPTION("rtx.dust", float, maxParticleSize, 3.f, "Maximum size (in pixels) to give to a particle when spawned.");
     RTX_OPTION("rtx.dust", float, opacity, .5f, "Opacity of the particles.");
     RTX_OPTION("rtx.dust", float, anisotropy, .5f, "Anisotropy of the particles for lighting purposes.");
-    RTX_OPTION("rtx.dust", float, gravityForce, -.5f, "Net influence of gravity acting on each particle (meters per second squared).");
-    RTX_OPTION("rtx.dust", float, maxSpeed, 3.f, "Maximum speed of a particle in world space.");
+    RTX_OPTION("rtx.dust", float, gravityForce, -.5f, "Net influence of gravity acting on each particle (centimeters per second squared, scaled by rtx.sceneScale at use).");
+    RTX_OPTION("rtx.dust", float, maxSpeed, 3.f, "Maximum speed of a particle in centimeters per second (scaled by rtx.sceneScale at use).");
     RTX_OPTION("rtx.dust", bool, useTurbulence, true, "Enable turbulence simulation.");
-    RTX_OPTION("rtx.dust", float, turbulenceAmplitude, 5.f, "How much turbulence influences the force of a particle.");
-    RTX_OPTION("rtx.dust", float, turbulenceFrequency, .05f, "The rate of change of turbulence forces.");
+    RTX_OPTION("rtx.dust", float, turbulenceAmplitude, 5.f, "How much turbulence influences the force of a particle, in centimeters per second per second (scaled by rtx.sceneScale at use).");
+    RTX_OPTION("rtx.dust", float, turbulenceFrequency, .05f, "The spatial frequency of turbulence cells, in inverse centimeters (scaled by rtx.sceneScale at use).");
     RTX_OPTION("rtx.dust", float, rotationSpeed, 5.f, "How quickly the particle is rotating (this primarily only affects light interaction).");
 
     void setupConstants(RtxContext* ctx, const float frameTimeSecs, Resources& resourceManager, DustParticleSystemConstants& constants);
