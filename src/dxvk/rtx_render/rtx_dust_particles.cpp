@@ -65,6 +65,7 @@ namespace dxvk {
       BEGIN_PARAMETER()
         COMMON_RAYTRACING_BINDINGS
         SAMPLER2D(DUST_PARTICLES_BINDING_DEPTH_INPUT)
+        TEXTURE2D(DUST_PARTICLES_BINDING_SURFACE_FLAGS_INPUT)
       END_PARAMETER()
 
       // Color and center pos fetched from VS
@@ -89,8 +90,15 @@ namespace dxvk {
       RemixGui::DragInt("Number of Particles", &numberOfParticlesObject(), 0.1f, 1, 100000000, "%d", ImGuiSliderFlags_AlwaysClamp);
 
       if (RemixGui::CollapsingHeader("Spawn")) {
+        // Slider caps bumped 10-100x post-sceneScale fix (W20). The original
+        // caps were sized assuming raw game-unit values (no sceneScale
+        // multiplication); after the fix, the effective range at
+        // sceneScale < 1.0 (e.g. cm-scale games) is correspondingly smaller.
+        // Bumping the caps lets users author large enough cm-convention
+        // values to express the previous effective range at any scene
+        // scale. No effect on sceneScale=1.0 users (defaults unchanged).
         RemixGui::DragFloat("Min Spawn Distance", &minSpawnDistanceObject(), 0.01f, 0.01f, maxSpawnDistance(), "%.2f", ImGuiSliderFlags_AlwaysClamp);
-        RemixGui::DragFloat("Max Spawn Distance", &maxSpawnDistanceObject(), 0.01f, minSpawnDistance(), 10000.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+        RemixGui::DragFloat("Max Spawn Distance", &maxSpawnDistanceObject(), 0.1f, minSpawnDistance(), 1000000.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
         RemixGui::DragFloat("Minimum Life", &minParticleLifeObject(), 0.01f, 0.01f, 100.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
         RemixGui::DragFloat("Maximum Life", &maxParticleLifeObject(), 0.01f, 0.01f, 100.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
         RemixGui::DragFloat("Minimum Size", &minParticleSizeObject(), 0.01f, 1.f, 50.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
@@ -104,14 +112,14 @@ namespace dxvk {
 
       if (RemixGui::CollapsingHeader("Simulation")) {
         RemixGui::DragFloat("Time Scale", &timeScaleObject(), 0.01f, 0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-        RemixGui::DragFloat("Gravity Force", &gravityForceObject(), 0.01f, -100.f, 100.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-        RemixGui::DragFloat("Rotation Speed", &rotationSpeedObject(), 0.01f, 0.f, 10.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-        RemixGui::DragFloat("Max Speed", &maxSpeedObject(), 0.01f, 0.f, 100.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+        RemixGui::DragFloat("Gravity Force", &gravityForceObject(), 0.1f, -10000.f, 10000.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+        RemixGui::DragFloat("Rotation Speed", &rotationSpeedObject(), 0.01f, 0.f, 1000.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+        RemixGui::DragFloat("Max Speed", &maxSpeedObject(), 0.1f, 0.f, 10000.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 
         RemixGui::Checkbox("Simulate Turbulence", &useTurbulenceObject());
         ImGui::BeginDisabled(!useTurbulence());
-        RemixGui::DragFloat("Turbulence Amplitude", &turbulenceAmplitudeObject(), 0.01f, 0.f, 10.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-        RemixGui::DragFloat("Turbulence Frequency", &turbulenceFrequencyObject(), 0.01f, 0.f, 10.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+        RemixGui::DragFloat("Turbulence Amplitude", &turbulenceAmplitudeObject(), 0.1f, 0.f, 1000.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+        RemixGui::DragFloat("Turbulence Frequency", &turbulenceFrequencyObject(), 0.1f, 0.f, 1000.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
         ImGui::EndDisabled();
       }
       ImGui::Unindent();
@@ -297,6 +305,10 @@ namespace dxvk {
     ctx->bindResourceBuffer(DUST_PARTICLES_BINDING_PARTICLES_BUFFER_INOUT, DxvkBufferSlice(m_particles));
     ctx->bindResourceView(DUST_PARTICLES_BINDING_DEPTH_INPUT, rtOutput.m_primaryDepth.view, nullptr);
     ctx->bindResourceSampler(DUST_PARTICLES_BINDING_DEPTH_INPUT, linearSampler);
+    // W23: bind PrimarySurfaceFlags so the fragment shader can detect
+    // viewmodel pixels and skip the dust draw there (rtx.viewModel.scale
+    // breaks the regular depth test against viewmodel pixels).
+    ctx->bindResourceView(DUST_PARTICLES_BINDING_SURFACE_FLAGS_INPUT, rtOutput.m_primarySurfaceFlags.view, nullptr);
     
     setupRasterizerState(ctx, rtOutput.m_finalOutput.resource(Resources::AccessType::ReadWrite));
     

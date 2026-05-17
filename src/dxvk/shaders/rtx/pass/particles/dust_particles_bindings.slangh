@@ -38,6 +38,9 @@ Sampler3D<float2> FilteredAccumulatedRadianceCoCg;
 layout(binding = DUST_PARTICLES_BINDING_DEPTH_INPUT)
 Sampler2D<float> PrimaryDepth;
 
+layout(binding = DUST_PARTICLES_BINDING_SURFACE_FLAGS_INPUT)
+Texture2D<uint> PrimarySurfaceFlags;
+
 // Outputs
 
 layout(binding = DUST_PARTICLES_BINDING_PARTICLES_BUFFER_INOUT)
