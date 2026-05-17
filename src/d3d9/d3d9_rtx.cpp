@@ -866,15 +866,35 @@ namespace dxvk {
       blendIndices.ref = nullptr;
     }
 
-    // Copy bones up to the max bone we have registered so far.
-    const uint32_t maxBone = m_maxBone > 0 ? m_maxBone : 255;
+    // Copy bones across the full WORLDMATRIX(0..255) range, not just the
+    // highest SetTransform-tracked index. The vertex data's blendIndices
+    // can reference a bone index higher than any SetTransform we have
+    // observed (e.g. when a mesh with more bones than any previously-
+    // rendered mesh is drawn for the first time, or when the engine bulk-
+    // uploads bones during loading before we started tracking — m_maxBone
+    // is monotonic and never resets, but it doesn't predict future
+    // SetTransform calls either). If maxBoneIndex (from blendIndices) >
+    // m_maxBone, the worker loop below would read pBoneMatrices[m_maxBone
+    // + 1 .. maxBoneIndex] from the m_stagedBones region BEYOND the
+    // snapshot we copied here — i.e. another draw's bones or
+    // uninitialised memory. Symptom: high-indexed bones (rigging
+    // convention puts feet bones last) get nonsense matrices and those
+    // vertices collapse to the origin or render with garbage transforms.
+    //
+    // Use a fixed 256-slot snapshot (the full D3D9 WORLDMATRIX range) to
+    // eliminate the OOB risk. Cost: at most 16KB/draw vs the previous
+    // m_maxBone-sized snapshot, well within the 16MB m_stagedBones
+    // buffer (1024 draws-per-frame * 256 bones headroom).
+    static constexpr uint32_t kMaxSupportedBones = 255; // D3D9 WORLDMATRIX(0..255)
+    const uint32_t maxBone = kMaxSupportedBones;
     const uint32_t startBoneTransform = GetTransformIndex(D3DTS_WORLDMATRIX(0));
+    const uint32_t observedMaxBone = m_maxBone; // captured for worker diagnostic
 
     const uint32_t nMat = maxBone + 1;
     const Matrix4* const boneMatrices = m_stagedBones.stageBones(
         d3d9State().transforms.data() + startBoneTransform, nMat);
 
-    return m_pGeometryWorkers->Schedule([boneMatrices, blendIndices, numBonesPerVertex, vertexCount]()->SkinningData {
+    return m_pGeometryWorkers->Schedule([boneMatrices, blendIndices, numBonesPerVertex, vertexCount, observedMaxBone]()->SkinningData {
       ScopedCpuProfileZone();
       uint32_t numBones = numBonesPerVertex;
 
@@ -887,6 +907,20 @@ namespace dxvk {
         if (!getMinMaxBoneIndices(pBlendIndices, blendIndices.stride, vertexCount, numBonesPerVertex, minBoneIndex, maxBoneIndex)) {
           minBoneIndex = 0;
           maxBoneIndex = 0;
+        }
+        // Diagnostic: if the vertex data references a bone index higher
+        // than any we observed via SetTransform tracking, log once. The
+        // memcpy above covers the full 256-slot range so the read is safe,
+        // but this surfaces unusual upload orderings (game-side bulk
+        // bone-upload patterns) that may be worth investigating per-game.
+        if (static_cast<uint32_t>(maxBoneIndex) > observedMaxBone && observedMaxBone > 0) {
+          ONCE(Logger::warn(str::format(
+            "[RTX-Compatibility-Warn] Skinned mesh references bone index ",
+            maxBoneIndex,
+            " but only ",
+            observedMaxBone,
+            " bone slots have been seen via SetTransform tracking. ",
+            "Vertex data is authoritative — matrices read from the full D3DTS_WORLDMATRIX(0..255) range.")));
         }
         numBones = maxBoneIndex + 1;
 
