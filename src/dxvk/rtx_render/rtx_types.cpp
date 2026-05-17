@@ -369,7 +369,15 @@ namespace dxvk {
         transformData.objectToWorld = transformData.objectToWorld * skinningMatrix;
         transformData.objectToView = transformData.objectToView * skinningMatrix;
 
-        skinningData.boneHash = 0;
+        // Hash the collapsed bone matrix into boneHash so that the BlasEntry
+        // cache key changes whenever the bone pose changes. Without this,
+        // boneHash==0 every frame and the cache hits kUpdateInstance forever,
+        // freezing BlasEntry::input to the first-frame objectToWorld. Symptom:
+        // rigid attached meshes (e.g. weapons parented to a hand bone) lock to
+        // whatever objectToWorld the first observed frame produced — if that
+        // frame had pLastCamera==null (objectToWorld defaults to identity)
+        // the mesh anchors at world origin and stays there.
+        skinningData.boneHash = XXH3_64bits(&skinningMatrix, sizeof(skinningMatrix));
         skinningData.numBones = 0;
         skinningData.numBonesPerVertex = 0;
       }
