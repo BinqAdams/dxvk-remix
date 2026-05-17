@@ -1234,6 +1234,18 @@ namespace dxvk {
   SceneManager::ObjectCacheState SceneManager::onSceneObjectUpdated(Rc<DxvkContext> ctx, const DrawCallState& drawCallState, BlasEntry* pBlas) {
     if (pBlas->frameLastTouched == m_device->getCurrentFrameId()) {
       pBlas->cacheMaterial(drawCallState.getMaterialData());
+      // Refresh the cached bone matrices so any toolkit / debug consumer
+      // that reads BlasEntry::input.skinningData.pBoneMatrices sees the
+      // most recent values for this frame, even when the mesh is drawn
+      // multiple times per frame (e.g. RenderDefault + RenderShadowmap).
+      // We intentionally leave numBones / numBonesPerVertex / boneHash
+      // untouched — those drive cache logic, and we are in the early
+      // "no rebuild" path. Only the per-bone matrix values can drift
+      // between same-frame draws of the same mesh.
+      if (pBlas->input.getSkinningStateMutable().numBones > 0 &&
+          drawCallState.getSkinningState().numBones == pBlas->input.getSkinningState().numBones) {
+        pBlas->input.getSkinningStateMutable().pBoneMatrices = drawCallState.getSkinningState().pBoneMatrices;
+      }
       return SceneManager::ObjectCacheState::kUpdateInstance;
     }
 
