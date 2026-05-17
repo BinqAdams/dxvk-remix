@@ -80,6 +80,13 @@ struct DustParticleSystemConstants {
 #define DUST_PARTICLES_BINDING_FILTERED_RADIANCE_Y_INPUT 40
 #define DUST_PARTICLES_BINDING_DEPTH_INPUT 41
 #define DUST_PARTICLES_BINDING_FILTERED_RADIANCE_CO_CG_INPUT 42
+// PrimarySurfaceFlags texture (Texture2D<uint>). Bit 0 = isViewModel
+// (per post_fx_motion_blur_geometry_flags.slangh). The fragment shader
+// reads this to detect viewmodel pixels and skip the dust draw there —
+// fixes pre-existing bug where rtx.viewModel.scale warps viewmodel depth
+// such that the standard depth-test never discards dust on top of the
+// gun. See W23-dust-viewmodel-depth.md.
+#define DUST_PARTICLES_BINDING_SURFACE_FLAGS_INPUT 43
 
 // Outputs
 
