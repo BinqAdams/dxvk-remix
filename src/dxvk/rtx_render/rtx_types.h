@@ -700,6 +700,15 @@ struct DrawCallState {
     return skinningData;
   }
 
+  // Mutable accessor for callers that need to refresh cached bone
+  // matrices without reassigning the full DrawCallState (kUpdateInstance
+  // early-return path). The geometry/material/hash fields must NOT be
+  // touched through this — the cache logic assumes those are stable
+  // between cache-update cycles.
+  SkinningData& getSkinningStateMutable() {
+    return skinningData;
+  }
+
   const FogState& getFogState() const {
     return fogState;
   }
