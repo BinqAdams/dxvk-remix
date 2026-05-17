@@ -40,11 +40,29 @@ float4 main(float4 screenPos : SV_Position, float4 radiance : COLOR, nointerpola
 {
   // depth test
   const float2 screenUV = screenPos.xy / particleCb.renderResolution;
-  
+
   const float depth = PrimaryDepth.SampleLevel(screenUV, 0);
-  if(depth <= screenPos.z && depth > 0.f)
+
+  // W23: skip dust on viewmodel pixels. rtx.viewModel.scale's view-space-Z
+  // scaling pushes viewmodel depth toward the far plane in PrimaryDepth,
+  // so the regular `depth <= screenPos.z` test never discards dust on top
+  // of the gun (at small viewmodel scales the entire weapon gets covered
+  // by atmospheric dust). The viewmodel is conceptually a HUD overlay —
+  // atmospheric particles should never appear in front of it regardless
+  // of its "true" depth. Bit 0 of PrimarySurfaceFlags is `isViewModel`
+  // per post_fx_motion_blur_geometry_flags.slangh's encoder.
+  // Use explicit dimension query because PrimarySurfaceFlags may be at
+  // render resolution (pre-upscale) while screenPos.xy is at output
+  // resolution (post-upscale).
+  uint2 sfDim;
+  PrimarySurfaceFlags.GetDimensions(sfDim.x, sfDim.y);
+  const int2 sfPixel = int2(clamp(screenUV * float2(sfDim), float2(0.f, 0.f), float2(sfDim) - 1.f));
+  const uint flags = PrimarySurfaceFlags[sfPixel];
+  const bool isViewModel = (flags & 0x1u) != 0u;
+
+  if (isViewModel || (depth <= screenPos.z && depth > 0.f))
     discard;
-  
+
   const float blend_range = 0.0005f;
   return radiance * softEdge(centerPosSize.z, centerPosSize.xy, screenUV) * saturate(abs(screenPos.z-depth) / blend_range);
 }
