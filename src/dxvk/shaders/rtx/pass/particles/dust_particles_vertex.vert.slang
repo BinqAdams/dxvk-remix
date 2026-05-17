@@ -90,7 +90,7 @@ GpuDustParticle respawn()
   // Add an additional random offset to hide the quantization in the blue noise generator currently used in randomWorldPointInFrustum(). 
   newParticle.position = randomWorldPointInFrustum() + random01 * 100 * particleCb.sceneScale;
   newParticle.initialTimeToLive = newParticle.timeToLive = lerp(particleCb.minTtl, particleCb.maxTtl, getNextSampleBlueNoise(rng));
-  newParticle.velocity = (float3(getNextSampleBlueNoise(rng), getNextSampleBlueNoise(rng), getNextSampleBlueNoise(rng)) * 2 - 1) * 40;
+  newParticle.velocity = (float3(getNextSampleBlueNoise(rng), getNextSampleBlueNoise(rng), getNextSampleBlueNoise(rng)) * 2 - 1) * 40 * particleCb.sceneScale;
   newParticle.size = lerp(particleCb.minParticleSize, particleCb.maxParticleSize, pow(getNextSampleBlueNoise(rng), 2));
   return newParticle;
 }
@@ -140,14 +140,16 @@ VsOut main(uint vertexIdx : SV_VertexID)
   
   if(particleCb.useTurbulence)
   {
-    particle.velocity += curlOfValueNoise(particle.position * particleCb.turbulenceFrequency, 0.f) * particleCb.turbulenceAmplitude * particleCb.deltaTimeSecs;
+    const float scaledTurbFreq = particleCb.turbulenceFrequency * particleCb.sceneScale;
+    particle.velocity += curlOfValueNoise(particle.position * scaledTurbFreq, 0.f) * particleCb.turbulenceAmplitude * particleCb.sceneScale * particleCb.deltaTimeSecs;
   }
   
-  particle.velocity += particleCb.upDirection * particleCb.gravityForce * particleCb.deltaTimeSecs;
+  particle.velocity += particleCb.upDirection * particleCb.gravityForce * particleCb.sceneScale * particleCb.deltaTimeSecs;
   
   if(dot(particle.velocity, particle.velocity) > float16_t(0.f))
   {
-    particle.velocity = min(particleCb.maxSpeed, length(particle.velocity)) * normalize(particle.velocity);
+    const float scaledMaxSpeed = particleCb.maxSpeed * particleCb.sceneScale;
+    particle.velocity = min(scaledMaxSpeed, length(particle.velocity)) * normalize(particle.velocity);
   }
   
   particle.position += particle.velocity * particleCb.deltaTimeSecs;
