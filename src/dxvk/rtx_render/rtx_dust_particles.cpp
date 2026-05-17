@@ -231,8 +231,9 @@ namespace dxvk {
     // Precalculate some variables to help with uniform distribution within a frustum
     const RtCamera& camera = ctx->getSceneManager().getCamera();
 
-    const float minDistance = minSpawnDistance() + camera.getNearPlane();
-    const float maxDistance = maxSpawnDistance() + camera.getNearPlane();
+    const float scaleToGameUnits = RtxOptions::sceneScale();
+    const float minDistance = minSpawnDistance() * scaleToGameUnits + camera.getNearPlane();
+    const float maxDistance = maxSpawnDistance() * scaleToGameUnits + camera.getNearPlane();
 
     pushArgs.nearH = tan(camera.getFov() * 0.5f) * minDistance;
     pushArgs.nearW = pushArgs.nearH * std::fabs(camera.getAspectRatio());
