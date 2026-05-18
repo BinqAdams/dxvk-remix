@@ -315,11 +315,21 @@ namespace dxvk {
       DxvkRtxdiRayQuery::stealBoundaryPixelSamplesWhenOutsideOfScreen.setDeferred(false);
       DxvkRtxdiRayQuery::permutationSamplingNthFrame.setDeferred(1);
       DxvkRtxdiRayQuery::enableDenoiserConfidence.setDeferred(false);
-      DxvkRtxdiRayQuery::enableBestLightSampling.setDeferred(false);
+      // [PK] Skip force-disabling enableBestLightSampling under DLSS-RR.
+      // setDeferred() writes into the Quality Presets layer (priority
+      // 0xFFFFFFFF — highest in the system, see rtx_option_constants.h),
+      // which overrides every config-file layer including user.conf. With
+      // this line removed the option resolves via its config layer or the
+      // RTX_OPTION default of `true`. The symmetric resetToDefault() in the
+      // Default-preset branch (line ~336) remains a safe no-op since the
+      // option is already at default.
+      // DxvkRtxdiRayQuery::enableBestLightSampling.setDeferred(false);
       DxvkRtxdiRayQuery::initialSampleCount.setDeferred(3);
       DxvkRtxdiRayQuery::spatialSamples.setDeferred(2);
       DxvkRtxdiRayQuery::disocclusionSamples.setDeferred(2);
-      DxvkRtxdiRayQuery::enableSampleStealing.setDeferred(false);
+      // [PK] Skip force-disabling enableSampleStealing under DLSS-RR — same
+      // Quality-layer override mechanism as enableBestLightSampling above.
+      // DxvkRtxdiRayQuery::enableSampleStealing.setDeferred(false);
 
       // ReSTIR GI
       if (RtxOptions::useReSTIRGI()) {
