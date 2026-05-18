@@ -368,15 +368,39 @@ namespace dxvk {
         transformData.objectToWorld = transformData.objectToWorld * skinningMatrix;
         transformData.objectToView = transformData.objectToView * skinningMatrix;
 
-        // Hash the collapsed bone matrix into boneHash so that the BlasEntry
-        // cache key changes whenever the bone pose changes. Without this,
-        // boneHash==0 every frame and the cache hits kUpdateInstance forever,
-        // freezing BlasEntry::input to the first-frame objectToWorld. Symptom:
-        // rigid attached meshes (e.g. weapons parented to a hand bone) lock to
-        // whatever objectToWorld the first observed frame produced — if that
-        // frame had pLastCamera==null (objectToWorld defaults to identity)
-        // the mesh anchors at world origin and stays there.
-        skinningData.boneHash = XXH3_64bits(&skinningMatrix, sizeof(skinningMatrix));
+        // Keep boneHash stable across frames for collapsed single-bone draws.
+        // The DrawCallCache multi-element scoring (rtx_draw_call_cache.cpp:101)
+        // adds +1000 to the score when BOTH `VertexPosition` AND `boneHash`
+        // match between the incoming draw and a BlasEntry stored last frame.
+        // This +1000 is what keeps a draw paired with its own BlasEntry under
+        // motion when several meshes in the same TopologicalHash bucket share
+        // material/texcoord (e.g. a multi-SubMesh skinned model where every
+        // SubMesh hits this single-bone collapse, like Painkiller's stakegun
+        // magazine — 5 bolt SubMeshes, identical material/texcoord, distinct
+        // VertexPosition hashes per SubMesh).
+        //
+        // A previous version of this code hashed the per-frame collapsed bone
+        // matrix into boneHash. That broke the own-entry +1000 protection
+        // because the stored boneHash (from last frame's matrix) never matches
+        // this frame's. Scoring then degenerates to pure distance, and under
+        // strafe motion an adjacent SubMesh's last-frame centroid can become
+        // closer than the SubMesh's own last-frame centroid — the draw picks
+        // the wrong BlasEntry and the resulting prev-frame state produces
+        // visibly wrong motion vectors (rotation error amplified at vertices
+        // far from the bone origin → bolt tips).
+        //
+        // FullGeometryHash (checked in exactMatch and used as the per-mesh
+        // VertexPosition tiebreaker in scoring) still differentiates distinct
+        // collapsed SubMeshes into separate BlasEntries — boneHash==0 does
+        // not cause one mesh's BVH to be reused for another.
+        //
+        // If the original "rigid attached mesh anchors at world origin" bug
+        // re-surfaces, fix it by refreshing BlasEntry::input.transformData on
+        // the kUpdateInstance early-return in scene_manager.cpp (the same
+        // pattern P2 uses for pBoneMatrices). Do not re-introduce a per-frame
+        // boneHash mutation here — it removes cache-pairing protection that
+        // dxvk-remix's multi-element bucket logic relies on.
+        skinningData.boneHash = 0;
         skinningData.numBones = 0;
         skinningData.numBonesPerVertex = 0;
       }
