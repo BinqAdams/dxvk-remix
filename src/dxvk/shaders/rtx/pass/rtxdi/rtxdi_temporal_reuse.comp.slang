@@ -160,7 +160,9 @@ void main(int2 threadIndex : SV_DispatchThreadID)
   {
     RTXDI_SkipRandomLightsRng(rng);
     RTXDI_SkipSingleLightRng(rng, previousBestLightIndex);
-    RAB_SkipRandoms(rng, 1);
+    // Two combine-randoms in initial sampling: best-light merge and
+    // outlier-merge (the MegaLights two-reservoir combine).
+    RAB_SkipRandoms(rng, 2);
   }
 
   const float3 virtualMotionVector = PrimaryVirtualMotionVector[pixelCoordinate].xyz;
