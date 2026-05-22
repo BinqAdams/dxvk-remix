@@ -102,13 +102,40 @@ void main(int2 threadIndex : SV_DispatchThreadID)
   RTXDI_Reservoir state = RTXDI_EmptyReservoir();
   if (cb.lightCount != 0)
   {
-    RTXDI_SampleRandomLights(state, rng, surface, previousBestLightIndex, previousBestLightPortalIdx,
+    // MegaLights two-reservoir partition: per-type RIS routes candidates
+    // into `state` (main) and `outlierState` (distant lights + intensity
+    // outliers) based on RAB_IsOutlierLight. See ResamplingFunctions.slangh
+    // and D:/VRE3/Docs/RTXDIResearch.md for the full rationale.
+    RTXDI_Reservoir outlierState = RTXDI_EmptyReservoir();
+    RTXDI_SampleRandomLights(state, outlierState, rng, surface, previousBestLightIndex, previousBestLightPortalIdx,
       cb.enableRtxdiInitialVisibility && !RTXDI_DEFER_INITIAL_VISIBILITY);
 
+    // Best-light reuse: a single light reservoir sampled from the previous
+    // frame's neighbourhood winner. Combined into `state` (main) — if the
+    // best light is itself an outlier (e.g. the distant light), it would
+    // already have appeared in the per-type random sampling above and been
+    // routed to outlierState; merging here into main is intentional so the
+    // best-light contribution influences the budget-clamp ratio rather than
+    // bypassing it.
     RTXDI_Reservoir bestLightReservoir = RTXDI_SampleSingleLight(rng, surface, previousBestLightIndex, previousBestLightPortalIdx,
       cb.enableRtxdiInitialVisibility && !RTXDI_DEFER_INITIAL_VISIBILITY);
     float random = RAB_GetNextRandom(rng);
     RTXDI_CombineReservoirs(state, bestLightReservoir, random, bestLightReservoir.targetPdf);
+
+    // MegaLights outlier-budget clamp. Cap outlierState.weightSum to a
+    // fraction of state.weightSum, so the post-merge weightSum is bounded
+    // by ~(1 + cap) * state.weightSum regardless of how large the outlier
+    // targetPdf is. cap=0.33 yields ≤25% post-merge contribution from
+    // outliers, matching Epic's MegaLights 20-25% directional-light cap.
+    // Gated by cb.enableRtxdiOutlierBudgetClamp so the previous behaviour
+    // (no clamp) can be restored for A/B comparison.
+    if (cb.enableRtxdiOutlierBudgetClamp)
+    {
+      outlierState.weightSum = min(outlierState.weightSum,
+                                   cb.rtxdiOutlierWeightCap * state.weightSum);
+    }
+    const float outlierMergeRnd = RAB_GetNextRandom(rng);
+    RTXDI_CombineReservoirs(state, outlierState, outlierMergeRnd, outlierState.targetPdf);
 
 #if RTXDI_DEFER_INITIAL_VISIBILITY
     if (cb.enableRtxdiInitialVisibility)
@@ -117,7 +144,25 @@ void main(int2 threadIndex : SV_DispatchThreadID)
     }
 #endif
 
-    // Note: I have NO IDEA why this works, but it's necessary to get unbiased results with best light sampling.
+    // Master-state finalization: the per-type localStates inside
+    // RTXDI_SampleRandomLights are individually finalized, but the
+    // cross-type-combined master state is not. Without finalization,
+    // state.weightSum stays as a raw accumulator instead of the unbiased
+    // contribution weight (W_R) form the integrator expects when reading
+    // reservoir.weightSum as inverseSelectionPdf at lighting.slangh:63.
+    // Calling finalize here matches the SDK pattern. Gated behind
+    // cb.enableRtxdiMasterReservoirFinalize so users can A/B compare.
+    if (cb.enableRtxdiMasterReservoirFinalize)
+    {
+      RTXDI_FinalizeResampling(state, 1.0, state.M);
+    }
+
+    // Normalize M to 1 so downstream temporal reuse treats this initial
+    // reservoir as a single accumulated sample rather than as a multi-sample
+    // history. Historically this was set unconditionally with the comment
+    // "I have NO IDEA why this works" — the rationale is that initial
+    // sampling produces one effective sample per pixel, and temporal reuse
+    // uses M as a history-length counter.
     state.M = 1;
   }
 
