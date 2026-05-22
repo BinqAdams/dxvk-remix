@@ -300,6 +300,15 @@ struct RaytraceArgs {
   uint enableRtxdiBestLightSampling;
   float directLightBoilingThreshold;
   float rtxdiDisocclusionFrames;
+  uint enableRtxdiReservoirBoilingFilter;
+  float rtxdiReservoirBoilingFilterThreshold;
+  float demodulateAlbedoLowerBound;
+  uint demodulateMode;
+  float demodulateAlbedoLuminanceFloor;
+  uint enableRtxdiMasterReservoirFinalize;
+  uint enableRtxdiOutlierBudgetClamp;
+  float rtxdiOutlierWeightCap;
+  float rtxdiOutlierIntensityThreshold;
 
   uint enableDemodulateRoughness;
   uint enableHitTFiltering;
