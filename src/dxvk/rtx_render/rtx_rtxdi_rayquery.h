@@ -83,5 +83,54 @@ namespace dxvk {
     RTX_OPTION("rtx.di", float, confidenceGradientScale, 6.f, "");
     RTX_OPTION("rtx.di", float, minimumConfidence, 0.1f, "");
     RTX_OPTION("rtx.di", float, confidenceHitDistanceSensitivity, 300.0f, "");
+    // Reservoir-stage boiling filter. Ported from ReSTIR GI's pre-shading
+    // applyBoilingFilter: detects per-pixel reservoirs whose targetPdf is a
+    // large multiple of the block average and zeros their M so the next
+    // temporal pass resamples instead of locking the outlier in. Distinct
+    // from rtx.demodulate.enableDirectLightBoilingFilter, which clamps the
+    // post-shaded screen-space color.
+    RTX_OPTION_ARGS("rtx.di", bool, enableReservoirBoilingFilter, true,
+                    "Enables a per-reservoir boiling filter in the RTXDI spatial reuse pass. Detects outlier reservoirs (M >= rtx.di.maxHistoryLength and targetPdf > average * threshold) and zeros them so the next temporal pass resamples.",
+                    args.flags = RtxOptionFlags::UserSetting);
+    RTX_OPTION_ARGS("rtx.di", float, reservoirBoilingFilterThreshold, 30.0f,
+                    "Multiplier above local block average targetPdf at which a reservoir is considered a boiling outlier and zeroed. Lower values filter more aggressively. Matches rtx.restirGI.boilingFilterRemoveReservoirThreshold semantics on the DI side.",
+                    args.flags = RtxOptionFlags::UserSetting);
+    // Master-state finalization. RTXDI_SampleRandomLights finalizes each
+    // per-type localState before combining into the master state, but the
+    // master state itself is not finalized. Without finalize, state.weightSum
+    // stays as a raw accumulator instead of the unbiased contribution weight
+    // (W_R) the integrator expects when reading it as invSelectionPdf at
+    // lighting.slangh:63. Default false to preserve historical brightness
+    // tuning (artists tuned to the un-finalized state); enable for the
+    // mathematically-correct W_R form.
+    RTX_OPTION_ARGS("rtx.di", bool, enableMasterReservoirFinalize, false,
+                    "Calls RTXDI_FinalizeResampling on the master initial-sampling reservoir, normalizing state.weightSum to the unbiased contribution weight (W_R) form that the integrator expects. Default false to preserve historical brightness; enable for mathematically-correct W_R semantics.",
+                    args.flags = RtxOptionFlags::UserSetting);
+    // MegaLights-style outlier-budget clamp (Narkowicz & Costa, SIGGRAPH
+    // 2025). The standard ReSTIR DI target PDF is visibility-blind: an
+    // occluded high-targetPdf candidate (distant lights amplified by
+    // 1/sin^2(half_angle), or bright far spheres) inflates master.weightSum
+    // even when V=0 at the current pixel, because the same inflated
+    // weightSum is read as inverseSelectionPdf at every pixel where ANOTHER
+    // sample wins. Visible as per-pixel sparkles on sphere-lit indoor
+    // surfaces that should be unaffected by the distant light.
+    //
+    // Fix: partition per-pixel RIS candidates into a main reservoir and an
+    // outlier reservoir (distant lights + lights with intensity above a
+    // per-frame percentile threshold), then clamp the outlier reservoir's
+    // weightSum to outlierWeightCap × main.weightSum BEFORE the final
+    // merge. The post-merge weightSum is mathematically bounded by
+    // (1 + outlierWeightCap) × main.weightSum regardless of how large the
+    // outlier's targetPdf is. See D:/VRE3/Docs/RTXDIResearch.md for full
+    // SOTA write-up.
+    RTX_OPTION_ARGS("rtx.di", bool, enableOutlierBudgetClamp, true,
+                    "Partition per-pixel RIS candidates into a main reservoir and an outlier reservoir (distant lights + intensity-percentile outliers), then clamp the outlier weightSum to outlierWeightCap × main.weightSum before merge. Mathematically bounds the master weightSum regardless of outlier targetPdf magnitude, eliminating the visibility-blind RIS inflation that causes per-pixel sparkles on sphere-lit surfaces. Default true.",
+                    args.flags = RtxOptionFlags::UserSetting);
+    RTX_OPTION_ARGS("rtx.di", float, outlierWeightCap, 0.33f,
+                    "Cap ratio for outlier-reservoir weightSum: outlier.weightSum ≤ outlierWeightCap × main.weightSum. 0.33 yields a ~25% post-merge contribution from outliers, matching MegaLights' 20-25% directional-light cap. Lower values clamp more aggressively (darker outdoors when the distant is the dominant light); higher values let outliers through more freely (more residual sparkle indoors).",
+                    args.flags = RtxOptionFlags::UserSetting);
+    RTX_OPTION_ARGS("rtx.di", float, outlierIntensityPercentile, 99.0f,
+                    "Per-frame percentile of non-distant light luminance used as the outlier-classification threshold. 99 → top 1% brightest lights are outliers. Distant lights are ALWAYS outliers regardless of this setting.",
+                    args.flags = RtxOptionFlags::UserSetting);
   };
 }

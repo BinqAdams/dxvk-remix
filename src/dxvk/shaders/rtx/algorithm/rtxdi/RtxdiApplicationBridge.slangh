@@ -850,6 +850,35 @@ RTXDI_LightRange RAB_GetLightRange(uint lightType)
   return result;
 }
 
+// MegaLights-style outlier classification. Used by RTXDI_SampleRandomLights
+// to partition per-pixel RIS candidates into a main reservoir and an outlier
+// reservoir whose weightSum is later clamped before merge, mathematically
+// bounding the inflation that occluded high-targetPdf candidates would
+// otherwise contribute to master.weightSum. See SOTA write-up at
+// D:/VRE3/Docs/RTXDIResearch.md (Narkowicz & Costa, SIGGRAPH 2025).
+//
+// Convention follows the single-purpose RAB pattern: a measurement function
+// and a separate policy function.
+//   - RAB_GetLightSampleIntensity returns a per-light scalar proxy for the
+//     candidate's RIS-weightSum contribution potential. We use BT.709
+//     luminance of the candidate sample's radiance, which already captures
+//     the distant light's 1/sin^2(half_angle) amplification baked into
+//     distant_light.slangh:100.
+//   - RAB_IsOutlierLight applies the policy: distant lights are always
+//     outliers (their effective area is unbounded); for any other type,
+//     intensity > cb.rtxdiOutlierIntensityThreshold (a per-frame
+//     percentile-based threshold set by LightManager::setRaytraceArgs).
+float RAB_GetLightSampleIntensity(RAB_LightSample lightSample)
+{
+  return calcBt709Luminance(lightSample.radiance);
+}
+
+bool RAB_IsOutlierLight(uint lightType, float intensity)
+{
+  if (lightType == lightTypeDistant) return true;
+  return intensity > cb.rtxdiOutlierIntensityThreshold;
+}
+
 float RAB_GetSurfaceIlluminance(int2 pixelPos, bool previousFrame)
 {
 #ifdef RAB_GRADIENTS_PASS
