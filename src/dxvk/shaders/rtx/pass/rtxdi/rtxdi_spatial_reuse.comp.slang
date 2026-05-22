@@ -68,10 +68,88 @@
 #include "rtxdi/DlssEnhancementFilterFunctions.slangh"
 #endif
 
+// Reservoir boiling filter: detects per-pixel reservoirs whose targetPdf
+// (light-sample weight) is a large multiple of the local block average,
+// and zeros their M so the next temporal pass resamples instead of locking
+// the outlier in. Mirrors the per-luminance filter that ReSTIR GI runs in
+// restir_gi_final_shading.comp.slang, but operates pre-shading on the
+// RTXDI reservoir's own weight.
+//
+// Threadgroup is 16x8 = 128 lanes (vs ReSTIR GI's 8x8 = 64), so the
+// groupshared aggregation arrays are sized for 128 / minLaneCount waves.
+#define RTXDI_BOILING_FILTER_MIN_LANE_COUNT 32
+#define RTXDI_BOILING_FILTER_GROUP_SIZE_X 16
+#define RTXDI_BOILING_FILTER_GROUP_SIZE_Y 8
+#define RTXDI_BOILING_FILTER_GROUP_SIZE (RTXDI_BOILING_FILTER_GROUP_SIZE_X * RTXDI_BOILING_FILTER_GROUP_SIZE_Y)
+#define RTXDI_BOILING_FILTER_WAVE_SLOTS ((RTXDI_BOILING_FILTER_GROUP_SIZE + RTXDI_BOILING_FILTER_MIN_LANE_COUNT - 1) / RTXDI_BOILING_FILTER_MIN_LANE_COUNT)
+
+groupshared float s_rtxdiBoilingWeights[RTXDI_BOILING_FILTER_WAVE_SLOTS];
+groupshared uint  s_rtxdiBoilingCount[RTXDI_BOILING_FILTER_WAVE_SLOTS];
+
+// Returns true if `reservoir` was identified as an outlier and zeroed.
+bool applyRtxdiReservoirBoilingFilter(uint2 LocalIndex, inout RTXDI_Reservoir reservoir)
+{
+  // Per-pixel weight: use targetPdf for valid reservoirs only. Invalid
+  // (empty) reservoirs contribute zero weight and zero count so they do
+  // not pull the average down.
+  const bool valid = RTXDI_IsValidReservoir(reservoir);
+  float weight = valid ? reservoir.targetPdf : 0.0f;
+
+  // Wave-level reduction (lanes within the same SIMD wave).
+  float waveWeight = WaveActiveSum(weight);
+  uint  waveCount  = WaveActiveCountBits(weight > 0.0f);
+
+  const uint linearThreadIndex = LocalIndex.x + LocalIndex.y * RTXDI_BOILING_FILTER_GROUP_SIZE_X;
+  const uint waveIndex = linearThreadIndex / WaveGetLaneCount();
+
+  if (WaveIsFirstLane())
+  {
+    s_rtxdiBoilingWeights[waveIndex] = waveWeight;
+    s_rtxdiBoilingCount[waveIndex]   = waveCount;
+  }
+
+  GroupMemoryBarrierWithGroupSync();
+
+  // One wave reduces all per-wave partials into a single average.
+  const uint numWaves = (RTXDI_BOILING_FILTER_GROUP_SIZE + WaveGetLaneCount() - 1) / WaveGetLaneCount();
+  if (linearThreadIndex < numWaves)
+  {
+    waveWeight = s_rtxdiBoilingWeights[linearThreadIndex];
+    waveCount  = s_rtxdiBoilingCount[linearThreadIndex];
+
+    waveWeight = WaveActiveSum(waveWeight);
+    waveCount  = WaveActiveSum(waveCount);
+
+    if (linearThreadIndex == 0)
+    {
+      s_rtxdiBoilingWeights[0] = (waveCount > 0) ? (waveWeight / float(waveCount)) : 0.0f;
+    }
+  }
+
+  GroupMemoryBarrierWithGroupSync();
+
+  const float averageNonzeroWeight = s_rtxdiBoilingWeights[0];
+
+  // Only filter once the reservoir has had time to accumulate -- otherwise
+  // we punish freshly-disoccluded pixels for being legitimately bright.
+  if (valid &&
+      reservoir.M >= cb.rtxdiMaxHistoryLength &&
+      averageNonzeroWeight > 0.0f &&
+      reservoir.targetPdf > averageNonzeroWeight * cb.rtxdiReservoirBoilingFilterThreshold)
+  {
+    reservoir = RTXDI_EmptyReservoir();
+    return true;
+  }
+  return false;
+}
+
 [shader("compute")]
 [numthreads(16, 8, 1)]
-void main(int2 threadIndex : SV_DispatchThreadID)
+void main(int2 threadIndex : SV_DispatchThreadID, uint2 LocalIndex : SV_GroupThreadID)
 {
+  // Out-of-bounds threads exit early. Invalid-surface threads keep going
+  // with an empty reservoir so they can participate in the boiling-filter
+  // barrier; they bail out after the filter call.
   if (any(threadIndex >= cb.camera.resolution))
   {
     return;
@@ -84,49 +162,68 @@ void main(int2 threadIndex : SV_DispatchThreadID)
     imageStore(GBufferLast, pixelCoordinate, RAB_PackLastFrameGBuffer(surface));
   }
 
-  if (!RAB_IsSurfaceValid(surface))
+  const bool surfaceValid = RAB_IsSurfaceValid(surface);
+
+  RTXDI_Reservoir result = RTXDI_EmptyReservoir();
+
+  if (surfaceValid)
+  {
+    RAB_RandomSamplerState rtxdiRNG = RAB_InitRandomSampler(pixelCoordinate, cb.frameIdx, 3);
+
+    RTXDI_Reservoir reservoir = RAB_LoadReservoir(pixelCoordinate, RTXDI_GetSpatialInputPage());
+
+    // Calculate the average reprojection confidence in the neighborhood to reject individual pixels that failed to reproject
+    const int filterRadius = 1;
+    const int filterArea = (filterRadius * 2 + 1) * (filterRadius * 2 + 1);
+    float sumConfidence = 0;
+    for (int xx = -filterRadius; xx <= filterRadius; ++xx)
+    for (int yy = -filterRadius; yy <= filterRadius; ++yy)
+    {
+      sumConfidence += ReprojectionConfidence[pixelCoordinate + int2(xx, yy)].r;
+    }
+
+    const float historyLength = sumConfidence * (float(kReprojectionConfidenceHistoryLength) / float(filterArea));
+
+    // Use the average history length to decide if we need to apply disocclusion boost.
+    int numSpatialSamples = historyLength < cb.rtxdiDisocclusionFrames
+      ? cb.rtxdiDisocclusionSamples
+      : cb.rtxdiSpatialSamples;
+
+    RTXDI_SpatialResamplingParameters sparams;
+    sparams.numSamples = cb.enableRtxdiSpatialReuse ? clamp(numSpatialSamples, 1, 16) : 0;
+    sparams.sourceBufferIndex = RTXDI_GetSpatialInputPage();
+    sparams.biasCorrectionMode = cb.enableRtxdiRayTracedBiasCorrection
+      ? RTXDI_BIAS_CORRECTION_RAY_TRACED
+      : RTXDI_BIAS_CORRECTION_BASIC;
+    sparams.samplingRadius = 30;
+    sparams.normalThreshold = 0.5;
+    sparams.depthThreshold = 0.1;
+    sparams.screenResolution = cb.camera.resolution;
+
+    result = RTXDI_SpatialResampling(
+      pixelCoordinate,
+      surface,
+      reservoir,
+      rtxdiRNG,
+      sparams);
+  }
+
+  // Boiling filter -- run before the invalid-surface bail-out so every
+  // in-bounds thread reaches the barrier. Skip partial threadgroups at the
+  // screen edge; their average would be polluted by out-of-bounds threads
+  // that returned early above.
+  const uint2 groupCornerThreadID = uint2(threadIndex) - LocalIndex;
+  const uint2 groupSize = uint2(RTXDI_BOILING_FILTER_GROUP_SIZE_X, RTXDI_BOILING_FILTER_GROUP_SIZE_Y);
+  if (cb.enableRtxdiReservoirBoilingFilter &&
+      all(groupCornerThreadID + groupSize - 1 < uint2(cb.camera.resolution)))
+  {
+    applyRtxdiReservoirBoilingFilter(LocalIndex, result);
+  }
+
+  if (!surfaceValid)
   {
     return;
   }
-
-  RAB_RandomSamplerState rtxdiRNG = RAB_InitRandomSampler(pixelCoordinate, cb.frameIdx, 3);
-  
-  RTXDI_Reservoir reservoir = RAB_LoadReservoir(pixelCoordinate, RTXDI_GetSpatialInputPage());
-
-  // Calculate the average reprojection confidence in the neighborhood to reject individual pixels that failed to reproject
-  const int filterRadius = 1;
-  const int filterArea = (filterRadius * 2 + 1) * (filterRadius * 2 + 1);
-  float sumConfidence = 0;
-  for (int xx = -filterRadius; xx <= filterRadius; ++xx)
-  for (int yy = -filterRadius; yy <= filterRadius; ++yy)
-  {
-    sumConfidence += ReprojectionConfidence[pixelCoordinate + int2(xx, yy)].r;
-  }
-
-  const float historyLength = sumConfidence * (float(kReprojectionConfidenceHistoryLength) / float(filterArea));
-
-  // Use the average history length to decide if we need to apply disocclusion boost.
-  int numSpatialSamples = historyLength < cb.rtxdiDisocclusionFrames
-    ? cb.rtxdiDisocclusionSamples
-    : cb.rtxdiSpatialSamples;
-
-  RTXDI_SpatialResamplingParameters sparams;
-  sparams.numSamples = cb.enableRtxdiSpatialReuse ? clamp(numSpatialSamples, 1, 16) : 0;
-  sparams.sourceBufferIndex = RTXDI_GetSpatialInputPage();
-  sparams.biasCorrectionMode = cb.enableRtxdiRayTracedBiasCorrection
-    ? RTXDI_BIAS_CORRECTION_RAY_TRACED
-    : RTXDI_BIAS_CORRECTION_BASIC;
-  sparams.samplingRadius = 30;
-  sparams.normalThreshold = 0.5;
-  sparams.depthThreshold = 0.1;
-  sparams.screenResolution = cb.camera.resolution;
-
-  RTXDI_Reservoir result = RTXDI_SpatialResampling(
-    pixelCoordinate,
-    surface,
-    reservoir,
-    rtxdiRNG,
-    sparams);
 
   RAB_StoreReservoir(result, pixelCoordinate, RTXDI_GetSpatialOutputPage());
 

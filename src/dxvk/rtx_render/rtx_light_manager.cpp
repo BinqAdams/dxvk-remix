@@ -22,10 +22,13 @@
 #include <vector>
 #include <cmath>
 #include <cassert>
+#include <algorithm>
+#include <limits>
 
 #include "rtx_light_manager.h"
 #include "rtx_context.h"
 #include "rtx_options.h"
+#include "rtx_rtxdi_rayquery.h"
 #include "rtx_utils.h"
 
 #include "../d3d9/d3d9_state.h"
@@ -788,6 +791,38 @@ namespace dxvk {
     const float rtxdiSamplesPerLight = std::min(1.f, (float)rtxdiInitialLightSamples / std::max(m_currentActiveLightCount, 1u));
     const float volumeRISSamplesPerLight = std::min(1.f, (float)volumeRISInitialLightSamples / std::max(m_currentActiveLightCount, 1u));
     const float risSamplesPerLight = std::min(1.f, (float)risLightSamples / std::max(m_currentActiveLightCount, 1u));
+
+    // MegaLights outlier-classification threshold. Compute the percentile-th
+    // value of non-distant active-light luminance and store as cbuffer
+    // outlierIntensityThreshold. Lights brighter than this are routed to the
+    // outlier reservoir alongside distant lights and clamped via
+    // rtxdiOutlierWeightCap before merge. Distant lights are ALWAYS outliers
+    // regardless of this threshold (their effective area is unbounded and
+    // their targetPdf is amplified by 1/sin^2(half_angle)).
+    //
+    // Cost: O(N) luminance + O(N) nth_element over active lights per frame.
+    // For PK's ~200-light scenes this is sub-microsecond.
+    float outlierIntensityThreshold = std::numeric_limits<float>::max();
+    if (DxvkRtxdiRayQuery::enableOutlierBudgetClamp()) {
+      std::vector<float> intensities;
+      intensities.reserve(m_lights.size());
+      for (const auto& entry : m_lights) {
+        const RtLight& light = entry.second;
+        if (static_cast<uint32_t>(light.getType()) == lightTypeDistant) continue;
+        if (light.getColorAndIntensity().w <= 0.0f) continue;
+        const Vector3 radiance = light.getRadiance();
+        const float lum = 0.2126f * radiance.x + 0.7152f * radiance.y + 0.0722f * radiance.z;
+        if (lum > 0.0f) intensities.push_back(lum);
+      }
+      if (!intensities.empty()) {
+        const float pct = std::clamp(DxvkRtxdiRayQuery::outlierIntensityPercentile(), 0.0f, 100.0f) / 100.0f;
+        size_t idx = static_cast<size_t>(pct * static_cast<float>(intensities.size()));
+        if (idx >= intensities.size()) idx = intensities.size() - 1;
+        std::nth_element(intensities.begin(), intensities.begin() + idx, intensities.end());
+        outlierIntensityThreshold = intensities[idx];
+      }
+    }
+    raytraceArgs.rtxdiOutlierIntensityThreshold = outlierIntensityThreshold;
 
     // Go over all light types and ranges
     for (uint32_t lightType = 0; lightType < lightTypeCount; ++lightType) {

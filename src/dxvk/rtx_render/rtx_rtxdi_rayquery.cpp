@@ -180,7 +180,7 @@ namespace dxvk {
         RW_TEXTURE2D(RTXDI_REUSE_BINDING_REPROJECTION_CONFIDENCE_OUTPUT)
         RW_TEXTURE2D(RTXDI_REUSE_BINDING_BSDF_FACTOR_OUTPUT)
         RW_TEXTURE2D(RTXDI_REUSE_BINDING_TEMPORAL_POSITION_OUTPUT)
-        
+
       END_PARAMETER()
     };
 
@@ -291,6 +291,22 @@ namespace dxvk {
     RemixGui::SliderInt("Initial Sample Count", &initialSampleCountObject(), 1, 64);
     RemixGui::Checkbox("Sample Best Lights", &enableBestLightSamplingObject());
     RemixGui::Checkbox("Initial Visibility", &enableInitialVisibilityObject());
+    RemixGui::Checkbox("Outlier Budget Clamp (MegaLights)", &enableOutlierBudgetClampObject());
+    if (enableOutlierBudgetClamp()) {
+      ImGui::Indent();
+      ImGui::TextWrapped("Partitions per-pixel RIS candidates into a main reservoir and an outlier reservoir (distant lights + intensity-percentile outliers), clamps the outlier weightSum to (cap × main.weightSum) before merge. Mathematically bounds master.weightSum regardless of outlier targetPdf magnitude — eliminates per-pixel sphere-lit sparkles from occluded high-radiance lights (Narkowicz & Costa, SIGGRAPH 2025).");
+      RemixGui::SliderFloat("Outlier Weight Cap", &outlierWeightCapObject(), 0.0f, 1.0f);
+      ImGui::TextWrapped("Cap ratio: outlier.weightSum ≤ cap × main.weightSum. Lower → more aggressive clamp (darker when outliers are the dominant light); higher → more residual sparkle indoors. 0.33 ≈ MegaLights' 25%% post-merge.");
+      RemixGui::SliderFloat("Outlier Intensity Percentile", &outlierIntensityPercentileObject(), 50.0f, 100.0f);
+      ImGui::TextWrapped("Per-frame percentile of non-distant light luminance used as the outlier-classification threshold. 99 → top 1%% brightest are outliers. Distant lights are always outliers regardless of this value.");
+      ImGui::Unindent();
+    }
+    RemixGui::Checkbox("Apply Master Reservoir Finalize (W_R fix)", &enableMasterReservoirFinalizeObject());
+    if (enableMasterReservoirFinalize()) {
+      ImGui::Indent();
+      ImGui::TextWrapped("Calls RTXDI_FinalizeResampling on the master initial-sampling reservoir, normalizing state.weightSum to the unbiased contribution weight (W_R) form that the integrator expects. May change overall brightness — artists historically tuned to the un-finalized state.");
+      ImGui::Unindent();
+    }
     RemixGui::Separator();
     RemixGui::Checkbox("Temporal Reuse", &enableTemporalReuseObject());
     if (enableTemporalReuse()) {
@@ -334,6 +350,11 @@ namespace dxvk {
     // ToDo add a struct for RTXDI within raytraceArgs and retain same names for options & refs in code. These diffs make it much more hard to look for ref in code...
     rtOutput.m_raytraceArgs.enableRtxdiCrossPortalLight = enableCrossPortalLight() && useRtxdiPortalShaderVariants();
     rtOutput.m_raytraceArgs.enableRtxdiInitialVisibility = enableInitialVisibility();
+    rtOutput.m_raytraceArgs.enableRtxdiMasterReservoirFinalize = enableMasterReservoirFinalize();
+    rtOutput.m_raytraceArgs.enableRtxdiOutlierBudgetClamp = enableOutlierBudgetClamp();
+    rtOutput.m_raytraceArgs.rtxdiOutlierWeightCap = outlierWeightCap();
+    // rtxdiOutlierIntensityThreshold is populated by LightManager::setRaytraceArgs
+    // from the per-frame percentile of non-distant light luminance.
     rtOutput.m_raytraceArgs.enableRtxdiPermutationSampling = permutationSamplingNthFrame() > 0 && (rtOutput.m_raytraceArgs.frameIdx % permutationSamplingNthFrame()) == 0;
     rtOutput.m_raytraceArgs.enableRtxdiRayTracedBiasCorrection = enableRayTracedBiasCorrection();
     rtOutput.m_raytraceArgs.enableRtxdiSampleStealing = enableSampleStealing();
@@ -347,6 +368,8 @@ namespace dxvk {
     rtOutput.m_raytraceArgs.rtxdiDisocclusionFrames = float(disocclusionFrames());
     rtOutput.m_raytraceArgs.rtxdiSpatialSamples = spatialSamples();
     rtOutput.m_raytraceArgs.rtxdiMaxHistoryLength = maxHistoryLength();
+    rtOutput.m_raytraceArgs.enableRtxdiReservoirBoilingFilter = enableReservoirBoilingFilter();
+    rtOutput.m_raytraceArgs.rtxdiReservoirBoilingFilterThreshold = reservoirBoilingFilterThreshold();
 
     // Note: best light sampling uses data written into the RtxdiBestLights texture by the confidence pass on the previous frame.
     // We need to make sure that the data is there and valid: light indices from more than one frame ago are not mappable to the current frame.
