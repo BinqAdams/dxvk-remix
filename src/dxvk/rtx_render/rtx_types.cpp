@@ -27,6 +27,7 @@
 #include "rtx_asset_replacer.h"
 #include "rtx_options.h"
 #include "rtx_terrain_baker.h"
+#include <unordered_set>
 #include "rtx_instance_manager.h"
 #include "rtx_light_manager.h"
 #include "graph/rtx_graph_instance.h"
@@ -377,6 +378,18 @@ namespace dxvk {
     //                   than doing N lookups per texture hash for each category.
     const XXH64_hash_t& textureHash = materialData.getColorTexture().getImageHash();
 
+    // HQ-sky-under-TnL diagnostic: log first ~40 unique textureHashes reaching this path,
+    // and whether each is in rtx.skyBoxTextures. Helps identify whether sky DPs under
+    // TnL mode reach this categorization function and which hashes they carry.
+    {
+      static std::unordered_set<XXH64_hash_t> seen;
+      if (seen.size() < 40 && seen.insert(textureHash).second) {
+        const bool inSkyBox = lookupHash(RtxOptions::skyBoxTextures(), textureHash);
+        Logger::warn(str::format("[SkyDebug] setupCategoriesForTexture hash=0x",
+                                 std::hex, textureHash, " inSkyBoxTextures=", inSkyBox));
+      }
+    }
+
     setCategory(InstanceCategories::WorldUI, lookupHash(RtxOptions::worldSpaceUiTextures(), textureHash));
     setCategory(InstanceCategories::WorldMatte, lookupHash(RtxOptions::worldSpaceUiBackgroundTextures(), textureHash));
 
@@ -412,6 +425,17 @@ namespace dxvk {
 
   void DrawCallState::setupCategoriesForGeometry() {
     const XXH64_hash_t assetReplacementHash = getHash(RtxOptions::geometryAssetHashRule());
+
+    // HQ-sky-under-TnL diagnostic: log first ~40 unique geometry-asset hashes.
+    {
+      static std::unordered_set<XXH64_hash_t> seen;
+      if (seen.size() < 40 && seen.insert(assetReplacementHash).second) {
+        const bool inSkyGeom = lookupHash(RtxOptions::skyBoxGeometries(), assetReplacementHash);
+        Logger::warn(str::format("[SkyDebug] setupCategoriesForGeometry asset=0x",
+                                 std::hex, assetReplacementHash, " inSkyBoxGeometries=", inSkyGeom));
+      }
+    }
+
     setCategory(InstanceCategories::Sky, lookupHash(RtxOptions::skyBoxGeometries(), assetReplacementHash));
   }
 
@@ -547,6 +571,8 @@ namespace dxvk {
 
 
     if (drawCallState.minZ >= RtxOptions::skyMinZThreshold()) {
+      ONCE(Logger::warn(str::format("[SkyDebug] Classified via minZ: minZ=", drawCallState.minZ,
+                                    " >= skyMinZThreshold=", RtxOptions::skyMinZThreshold())));
       return SkyDetectionSource::Explicit;
     }
 
@@ -556,10 +582,31 @@ namespace dxvk {
 
     if (drawCallState.getMaterialData().usesTexture()) {
       if (lookupHash(RtxOptions::skyBoxTextures(), drawCallState.getMaterialData().getHash())) {
+        ONCE(Logger::warn(str::format("[SkyDebug] Classified via texture-hash: hash=0x",
+                                      std::hex, drawCallState.getMaterialData().getHash(),
+                                      " usesTexture=true")));
         return SkyDetectionSource::Explicit;
       }
     } else {
+      // HQ-sky-under-TnL diagnostic: we expect sky textures to be in skyBoxTextures,
+      // so if usesTexture() returns false for a hash that IS in the list, dump why.
+      {
+        const auto matHash = drawCallState.getMaterialData().getHash();
+        if (lookupHash(RtxOptions::skyBoxTextures(), matHash)) {
+          ONCE(Logger::warn(str::format(
+            "[SkyDebug] REJECTED: hash=0x", std::hex, matHash, " IS in skyBoxTextures, but usesTexture()=false. ",
+            "ColorTex.isValid=", drawCallState.getMaterialData().getColorTexture().isValid(),
+            " ColorTex.isImageEmpty=", drawCallState.getMaterialData().getColorTexture().isImageEmpty(),
+            " ColorTex2.isValid=", drawCallState.getMaterialData().getColorTexture2().isValid(),
+            " ColorTex2.isImageEmpty=", drawCallState.getMaterialData().getColorTexture2().isImageEmpty(),
+            " drawCallID=", drawCallState.drawCallID,
+            " minZ=", drawCallState.minZ,
+            " skyMinZThreshold=", RtxOptions::skyMinZThreshold())));
+        }
+      }
       if (drawCallState.drawCallID < RtxOptions::skyDrawcallIdThreshold()) {
+        ONCE(Logger::warn(str::format("[SkyDebug] Classified via drawCallID: drawCallID=", drawCallState.drawCallID,
+                                      " < skyDrawcallIdThreshold=", RtxOptions::skyDrawcallIdThreshold())));
         return SkyDetectionSource::Explicit;
       }
     }
@@ -586,6 +633,20 @@ namespace dxvk {
 
   void DrawCallState::setupCategoriesForHeuristics(uint32_t prevFrameSeenCamerasCount,
                                                    std::vector<Vector3>& seenCameraPositions) {
+    // HQ-sky-under-TnL diagnostic: log entry with material hash + existing Sky category.
+    {
+      static std::unordered_set<XXH64_hash_t> seen;
+      const XXH64_hash_t matHash = getMaterialData().getHash();
+      if (seen.size() < 40 && seen.insert(matHash).second) {
+        const bool skyAlreadySet = categories.test(InstanceCategories::Sky);
+        const bool inSkyBox = lookupHash(RtxOptions::skyBoxTextures(), matHash);
+        Logger::warn(str::format("[SkyDebug] setupCategoriesForHeuristics entry matHash=0x",
+                                 std::hex, matHash, " SkyAlreadySet=", skyAlreadySet,
+                                 " inSkyBoxTextures=", inSkyBox,
+                                 " usesTexture=", getMaterialData().usesTexture()));
+      }
+    }
+
     const SkyDetectionSource skySource = shouldBakeSky(*this,
                                                        futureSkinningData.valid(),
                                                        prevFrameSeenCamerasCount,
