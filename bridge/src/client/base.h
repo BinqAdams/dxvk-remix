@@ -195,7 +195,61 @@ protected:
     }
 
     if (toRefValue<Ref::Object>(fusedCnt) == 0) {
-      // Object refcount is zero - destroy the object.
+      // PK-diag WORKAROUND: survive use-after-free on this object.
+      // Root cause is the bridge's refcount scheme: enum Ref has
+      // `Both = Interface`, so `decRef<Ref::Interface>` (called from COM
+      // Release) also decrements the Object half. That can drive Object
+      // to zero and destroy the object while a D3DAutoPtr still holds it.
+      // When that AutoPtr is later reset (e.g., m_state.streams[N] =
+      // newVB), this decRef runs on freed memory — m_deleter is zero-filled
+      // → std::bad_function_call → fastfail.
+      //
+      // Here we detect the empty-deleter signature and skip the call,
+      // turning a crash into (at worst) a small leak. The object was
+      // already destroyed, so not running the deleter is correct. The
+      // proper fix is to stop Release from decrementing Object (by making
+      // Both != Interface or by only touching the Interface half in
+      // Release's path). Revert this guard once that lands upstream.
+      if (!m_deleter) {
+        static thread_local uint32_t s_pkDiagHits = 0;
+        if (s_pkDiagHits < 16) {  // rate-limit log flood
+          // On the FIRST hit (per thread), capture the caller chain so we
+          // can pinpoint the loop that's hammering decRef on already-dead
+          // objects. With Both==Interface aliasing and the existing
+          // workaround turning the crash into a leak, the stack trace is
+          // the only thing that uniquely identifies the offending site.
+          // Subsequent hits in the same silence window are typically the
+          // same loop iterating, so we don't bother re-capturing.
+          if (s_pkDiagHits == 0) {
+            void* frames[8] = {};
+            USHORT n = RtlCaptureStackBackTrace(1u, 8u, frames, nullptr);
+            char framebuf[256];
+            int len = 0;
+            for (USHORT i = 0; i < n && len < (int)(sizeof(framebuf) - 32); i++) {
+              len += snprintf(framebuf + len, sizeof(framebuf) - len,
+                              "%s%p", i == 0 ? "" : "<-", frames[i]);
+            }
+            if (n == 0) {
+              framebuf[0] = '?'; framebuf[1] = '\0';
+            }
+            bridge_util::Logger::err(bridge_util::format_string(
+              "[PK-DIAG] decRef: empty m_deleter on object %p, fusedCnt=0x%llx"
+              " - skipping deleter (use-after-free survived, object already dead)"
+              " stack: %s",
+              this, static_cast<unsigned long long>(fusedCnt), framebuf));
+          } else {
+            bridge_util::Logger::err(bridge_util::format_string(
+              "[PK-DIAG] decRef: empty m_deleter on object %p, fusedCnt=0x%llx"
+              " - skipping deleter (use-after-free survived, object already dead)",
+              this, static_cast<unsigned long long>(fusedCnt)));
+          }
+          ++s_pkDiagHits;
+          if (s_pkDiagHits == 16) {
+            bridge_util::Logger::err("[PK-DIAG] decRef empty-deleter: further hits silenced on this thread");
+          }
+        }
+        return 0;
+      }
       m_deleter();
     }
 
@@ -381,6 +435,13 @@ protected:
     Logger::debug(format_string("%s object [%p/%p] destroyed",
                                 toD3D9ObjectTypeName<T>(), this, m_id));
 #endif
+    // PK-diag: destructor trace for correlating decRef-on-empty-deleter
+    // failures with just-destroyed objects. Left at trace level now that
+    // the use-after-free root cause (Release decrementing Object refcount
+    // via the Ref::Both==Ref::Interface enum alias) is known.
+    bridge_util::Logger::trace(bridge_util::format_string(
+      "[PK-DIAG] D3DBase destructor: type=%s this=%p id=%p",
+      toD3D9ObjectTypeName<T>(), this, m_id));
   }
 
 public:
