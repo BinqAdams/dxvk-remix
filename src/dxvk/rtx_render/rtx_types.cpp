@@ -332,8 +332,8 @@ namespace dxvk {
       assert(geometryData.blendWeightBuffer.defined());
       assert(skinningData.numBonesPerVertex <= 4);
 
+      const auto fusedMode = RtxOptions::fusedWorldViewMode();
       if (pLastCamera != nullptr) {
-        const auto fusedMode = RtxOptions::fusedWorldViewMode();
         if (likely(fusedMode == FusedWorldViewMode::None)) {
           transformData.objectToView = transformData.worldToView;
           // Do not bother when transform is fused. Camera matrices are identity and so is worldToView.
@@ -341,7 +341,22 @@ namespace dxvk {
         transformData.objectToWorld = pLastCamera->getViewToWorld(false) * transformData.objectToView;
         transformData.worldToView = pLastCamera->getWorldToView(false);
       } else {
-        ONCE(Logger::warn("[RTX-Compatibility-Warn] Cannot decompose the matrices for a skinned mesh because the camera is not set."));
+        // pLastCamera is null on the first skinned draw of each frame (camera state
+        // resets to Unknown at CameraManager::onFrameEnd). Without a fallback,
+        // objectToWorld / objectToView stay at stale values and the next skinning
+        // pass transforms vertices through garbage — visually, replacement-mesh
+        // verts stretch toward world origin. Assume bones are already in world
+        // space (true for games that upload world-space bone matrices to the
+        // skinning pipeline) so objectToWorld collapses to identity, exactly
+        // matching what the pLastCamera-present branch computes when
+        // objectToView == worldToView.
+        ONCE(Logger::warn("[RTX-Compatibility-Warn] Skinned mesh finalized before camera was set — using identity objectToWorld fallback (assumes world-space bones)."));
+        if (likely(fusedMode == FusedWorldViewMode::None)) {
+          transformData.objectToView = transformData.worldToView;
+          transformData.objectToWorld = Matrix4();  // identity
+        } else {
+          transformData.objectToWorld = transformData.objectToView;
+        }
       }
 
       // In rare cases when the mesh is skinned but has only one active bone, skip the skinning pass
