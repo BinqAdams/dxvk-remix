@@ -31,6 +31,9 @@
 #include <iomanip>
 #include <sstream>
 #include <cassert>
+#include <exception>   // PK-diag: std::set_terminate / std::current_exception
+#include <cstdlib>     // PK-diag: std::abort
+#include <stdexcept>   // PK-diag: std::exception in terminate handler
 
 #ifndef _WIN32
 #include <sys/time.h>
@@ -224,6 +227,33 @@ namespace bridge_util {
 
   void Logger::set_loglevel(const LogLevel level) {
     get().m_level = level;
+  }
+
+  // PK-diag: terminate handler for the bridge client (Painkiller.exe side).
+  // Matches the server-side handler in dxvk-remix/src/util/log/log.cpp. Logs
+  // any uncaught exception via the bridge's own Logger (writes to bridge32.log
+  // for client builds) so the message survives the impending abort+fastfail.
+  namespace {
+    struct PkDiagTerminateInstaller {
+      PkDiagTerminateInstaller() {
+        std::set_terminate([]() {
+          try {
+            auto eptr = std::current_exception();
+            if (eptr) {
+              std::rethrow_exception(eptr);
+            } else {
+              Logger::err("[PK-DIAG] std::terminate() called with no active exception");
+            }
+          } catch (const std::exception& e) {
+            Logger::err(std::string("[PK-DIAG] Uncaught std::exception: ") + e.what());
+          } catch (...) {
+            Logger::err("[PK-DIAG] Uncaught exception of unknown type");
+          }
+          std::abort();
+        });
+      }
+    };
+    static const PkDiagTerminateInstaller s_pkDiagInstaller;
   }
 
 }
