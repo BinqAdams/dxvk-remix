@@ -203,8 +203,13 @@ vec3 loadSecondaryRadiance(
     secondaryCombinedSpecularRadiance = vec3(0);
   }
 
-  return (secondaryCombinedDiffuseRadiance * secondaryAlbedo +
-          secondaryCombinedSpecularRadiance * secondarySpecularAlbedo) * secondaryAttenuation;
+  const vec3 effSecondaryAlbedo = computeEffectiveAlbedo(
+    secondaryAlbedo, cb.demodulateMode, 0.0f, cb.demodulateAlbedoLuminanceFloor);
+  const vec3 effSecondarySpecularAlbedo = computeEffectiveAlbedo(
+    secondarySpecularAlbedo, cb.demodulateMode, 0.0f, cb.demodulateAlbedoLuminanceFloor);
+
+  return (secondaryCombinedDiffuseRadiance * effSecondaryAlbedo +
+          secondaryCombinedSpecularRadiance * effSecondarySpecularAlbedo) * secondaryAttenuation;
 }
 
 // Loads, combines, and remodulates the primary direct + indirect radiance contribution.
@@ -293,9 +298,17 @@ vec3 loadPrimaryRadiance(
     roughnessFactor = getRoughnessDemodulationFactor(perceptualRoughness, cb.roughnessDemodulationOffset);
   }
 
+  // For mode 0 the helper returns the albedo unchanged (albedoLowerBound unused by composite —
+  // passing 0 keeps mode 0 identical to historical). For mode 1 both demodulate and composite use
+  // the same chroma-preserving luminance-floored albedo, so the demod/remod cycle is symmetric.
+  const vec3 effPrimaryAlbedo = computeEffectiveAlbedo(
+    primaryAlbedo, cb.demodulateMode, 0.0f, cb.demodulateAlbedoLuminanceFloor);
+  const vec3 effPrimarySpecularAlbedo = computeEffectiveAlbedo(
+    primarySpecularAlbedo, cb.demodulateMode, 0.0f, cb.demodulateAlbedoLuminanceFloor);
+
   vec3 remodulatedTotalPrimaryRadiance =
-    (primaryCombinedDiffuseRadiance * primaryAlbedo +
-     primaryCombinedSpecularRadiance * primarySpecularAlbedo / roughnessFactor) * primaryAttenuation;
+    (primaryCombinedDiffuseRadiance * effPrimaryAlbedo +
+     primaryCombinedSpecularRadiance * effPrimarySpecularAlbedo / roughnessFactor) * primaryAttenuation;
 
   if (cb.enableReSTIRGI)
   {

@@ -308,6 +308,8 @@ struct RaytraceArgs {
   float demodulateAlbedoLuminanceFloor;
   uint enableRtxdiMasterReservoirFinalize;
   uint enableRtxdiOutlierBudgetClamp;
+  uint enableRtxdiPreserveOutlierWhenMainEmpty;
+  uint enableRtxdiOutlierSoftClamp;
   float rtxdiOutlierWeightCap;
   float rtxdiOutlierIntensityThreshold;
 

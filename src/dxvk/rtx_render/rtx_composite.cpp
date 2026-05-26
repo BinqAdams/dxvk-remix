@@ -416,6 +416,8 @@ namespace dxvk {
     compositeArgs.debugKnob = ctx->getCommonObjects()->metaDebugView().debugKnob();
     compositeArgs.demodulateRoughness = settings.demodulateRoughness;
     compositeArgs.roughnessDemodulationOffset = settings.roughnessDemodulationOffset;
+    compositeArgs.demodulateMode = ctx->getCommonObjects()->metaDemodulate().mode();
+    compositeArgs.demodulateAlbedoLuminanceFloor = ctx->getCommonObjects()->metaDemodulate().albedoLuminanceFloor();
     compositeArgs.usePostFilter = usePostFilter()
       && (RtxOptions::useDenoiser() || RtxOptions::isRayReconstructionEnabled())
       && !RtxOptions::useDenoiserReferenceMode()
