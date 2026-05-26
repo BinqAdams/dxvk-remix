@@ -48,8 +48,17 @@ struct DemodulationData
 
 vec3 demodulateColor(vec3 light, vec3 color)
 {
-  const vec3 demodulationEpsilon = vec3(0.01f);
-  return light / max(color, demodulationEpsilon);
+  // Effective albedo. In mode 0 this is `max(color, albedoLowerBound)` (historical).
+  // In mode 1 this is a chroma-preserving luminance floor (computeEffectiveAlbedo).
+  // The composite pass uses the same helper to keep demod/remod symmetric.
+  // Exposed via rtx.demodulate.mode / rtx.demodulate.albedoLowerBound /
+  // rtx.demodulate.albedoLuminanceFloor.
+  const vec3 effAlbedo = computeEffectiveAlbedo(
+    color,
+    cb.demodulateMode,
+    cb.demodulateAlbedoLowerBound,
+    cb.demodulateAlbedoLuminanceFloor);
+  return light / max(effAlbedo, vec3(1e-6f));
 }
 
 void demodulate(
