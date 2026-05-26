@@ -238,7 +238,7 @@ void RtSphereLight::applyTransform(const Matrix4& lightToWorld) {
   updateCachedHash();
 }
 
-void RtSphereLight::writeGPUData(unsigned char* data, std::size_t& offset) const {
+void RtSphereLight::writeGPUData(unsigned char* data, std::size_t& offset, float radianceScale) const {
   [[maybe_unused]] const std::size_t oldOffset = offset;
 
   writeGPUHelper(data, offset, m_position.x);
@@ -248,7 +248,7 @@ void RtSphereLight::writeGPUData(unsigned char* data, std::size_t& offset) const
   writeGPUHelper(data, offset, glm::packHalf1x16(m_radius));
   writeGPUPadding<2>(data, offset);
 
-  writeGPUHelper(data, offset, packLogLuv32(m_radiance));
+  writeGPUHelper(data, offset, packLogLuv32(m_radiance * radianceScale));
 
   m_shaping.writeGPUData(data, offset);
 
@@ -371,7 +371,7 @@ void RtRectLight::applyTransform(const Matrix4& lightToWorld) {
   updateCachedHash();
 }
 
-void RtRectLight::writeGPUData(unsigned char* data, std::size_t& offset) const {
+void RtRectLight::writeGPUData(unsigned char* data, std::size_t& offset, float radianceScale) const {
   [[maybe_unused]] const std::size_t oldOffset = offset;
 
   writeGPUHelper(data, offset, m_position.x);
@@ -381,7 +381,7 @@ void RtRectLight::writeGPUData(unsigned char* data, std::size_t& offset) const {
   writeGPUHelper(data, offset, glm::packHalf1x16(m_dimensions.x));
   writeGPUHelper(data, offset, glm::packHalf1x16(m_dimensions.y));
 
-  writeGPUHelper(data, offset, packLogLuv32(m_radiance));
+  writeGPUHelper(data, offset, packLogLuv32(m_radiance * radianceScale));
 
   m_shaping.writeGPUData(data, offset);
 
@@ -553,7 +553,7 @@ void RtDiskLight::applyTransform(const Matrix4& lightToWorld) {
   updateCachedHash();
 }
 
-void RtDiskLight::writeGPUData(unsigned char* data, std::size_t& offset) const {
+void RtDiskLight::writeGPUData(unsigned char* data, std::size_t& offset, float radianceScale) const {
   [[maybe_unused]] const std::size_t oldOffset = offset;
 
   writeGPUHelper(data, offset, m_position.x);
@@ -563,7 +563,7 @@ void RtDiskLight::writeGPUData(unsigned char* data, std::size_t& offset) const {
   writeGPUHelper(data, offset, glm::packHalf1x16(m_halfDimensions.x));
   writeGPUHelper(data, offset, glm::packHalf1x16(m_halfDimensions.y));
 
-  writeGPUHelper(data, offset, packLogLuv32(m_radiance));
+  writeGPUHelper(data, offset, packLogLuv32(m_radiance * radianceScale));
 
   m_shaping.writeGPUData(data, offset);
 
@@ -716,7 +716,7 @@ void RtCylinderLight::applyTransform(const Matrix4& lightToWorld) {
   updateCachedHash();
 }
 
-void RtCylinderLight::writeGPUData(unsigned char* data, std::size_t& offset) const {
+void RtCylinderLight::writeGPUData(unsigned char* data, std::size_t& offset, float radianceScale) const {
   [[maybe_unused]] const std::size_t oldOffset = offset;
 
   writeGPUHelper(data, offset, m_position.x);
@@ -727,7 +727,7 @@ void RtCylinderLight::writeGPUData(unsigned char* data, std::size_t& offset) con
   assert(m_axisLength < FLOAT16_MAX);
   writeGPUHelper(data, offset, glm::packHalf1x16(m_axisLength));
 
-  writeGPUHelper(data, offset, packLogLuv32(m_radiance));
+  writeGPUHelper(data, offset, packLogLuv32(m_radiance * radianceScale));
   writeGPUPadding<12>(data, offset); // no shaping
 
   // Note: Ensure the axis vector is normalized as this is a requirement for the GPU encoding.
@@ -847,7 +847,7 @@ void RtDistantLight::applyTransform(const Matrix4& lightToWorld) {
   updateCachedHash();
 }
 
-void RtDistantLight::writeGPUData(unsigned char* data, std::size_t& offset) const {
+void RtDistantLight::writeGPUData(unsigned char* data, std::size_t& offset, float radianceScale) const {
   [[maybe_unused]] const std::size_t oldOffset = offset;
 
   // Direction and orientation are stored as full float32 (not float16): float16's coarse angular
@@ -861,7 +861,7 @@ void RtDistantLight::writeGPUData(unsigned char* data, std::size_t& offset) cons
   writeGPUHelper(data, offset, m_orientation.z);
   writeGPUHelper(data, offset, m_orientation.w);
 
-  writeGPUHelper(data, offset, packLogLuv32(m_radiance));
+  writeGPUHelper(data, offset, packLogLuv32(m_radiance * radianceScale));
   writeGPUPadding<12>(data, offset); // no shaping
 
   assert(isApproxNormalized(m_direction, kNormalizationThreshold));
@@ -1093,26 +1093,26 @@ void RtLight::applyTransform(const Matrix4& lightToWorld) {
   }
 }
 
-void RtLight::writeGPUData(unsigned char* data, std::size_t& offset) const {
+void RtLight::writeGPUData(unsigned char* data, std::size_t& offset, float radianceScale) const {
   switch (m_type) {
   default:
     assert(false);
 
     [[fallthrough]];
   case RtLightType::Sphere:
-    m_sphereLight.writeGPUData(data, offset);
+    m_sphereLight.writeGPUData(data, offset, radianceScale);
     break;
   case RtLightType::Rect:
-    m_rectLight.writeGPUData(data, offset);
+    m_rectLight.writeGPUData(data, offset, radianceScale);
     break;
   case RtLightType::Disk:
-    m_diskLight.writeGPUData(data, offset);
+    m_diskLight.writeGPUData(data, offset, radianceScale);
     break;
   case RtLightType::Cylinder:
-    m_cylinderLight.writeGPUData(data, offset);
+    m_cylinderLight.writeGPUData(data, offset, radianceScale);
     break;
   case RtLightType::Distant:
-    m_distantLight.writeGPUData(data, offset);
+    m_distantLight.writeGPUData(data, offset, radianceScale);
     break;
   }
 }
