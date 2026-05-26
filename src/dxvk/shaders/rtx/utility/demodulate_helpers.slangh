@@ -21,6 +21,42 @@
 */
 #pragma once
 
+#include "rtx/utility/color.slangh"
+
+// Demodulation modes (must match dxvk::DemodulatePass::Mode in rtx_demodulate.h)
+//   0 = Default       — per-channel `max(albedo, albedoLowerBound)`. Original behaviour.
+//   1 = LuminanceFloor — chroma-preserving luminance floor on the albedo divisor.
+//                        The albedo is scaled up to reach `albedoLuminanceFloor` luminance
+//                        when its own luminance falls below it; otherwise unchanged.
+//                        Symmetric: composite uses the same effective albedo for
+//                        re-modulation, so noise levels going to the denoiser are bounded
+//                        without producing the dim-output artifact that mode 0 has when
+//                        the lower bound is raised.
+static const uint kDemodulationModeDefault       = 0;
+static const uint kDemodulationModeLuminanceFloor = 1;
+
+// Computes the effective albedo used by both the demodulator (as divisor) and the
+// composite pass (as re-modulator). Both passes MUST call this with the same arguments
+// so the demod/remod cycle is reversible.
+//
+// Parameters:
+//   albedo            Raw albedo (per-channel)
+//   mode              Demodulation mode (see kDemodulationMode* above)
+//   albedoLowerBound  Per-channel lower bound (mode 0)
+//   luminanceFloor    Minimum luminance the effective albedo is allowed to reach (mode 1)
+vec3 computeEffectiveAlbedo(vec3 albedo, uint mode, float albedoLowerBound, float luminanceFloor)
+{
+  if (mode == kDemodulationModeLuminanceFloor)
+  {
+    // Scale albedo up to satisfy the luminance floor while keeping its chrominance.
+    const float albLum = max(calcBt709Luminance(albedo), 1e-6f);
+    const float targetLum = max(albLum, luminanceFloor);
+    return albedo * (targetLum / albLum);
+  }
+  // mode 0: per-channel clamp.
+  return max(albedo, vec3(albedoLowerBound));
+}
+
 float getRoughnessDemodulationFactor(float perceptualRoughness, float offset)
 {
   const float perceptualRoughnessSquared = perceptualRoughness * perceptualRoughness;
