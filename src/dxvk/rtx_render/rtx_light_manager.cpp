@@ -371,11 +371,59 @@ namespace dxvk {
 
     // Count the active light of each type
 
+    // Distance-based light culling configuration (RtxOptions::distanceCullLights.*).
+    // Removes non-distant lights beyond a radius from the main camera before
+    // they reach the GPU light buffer, so every lighting pass (RTXDI, NEE
+    // cache, ReSTIR GI, volumetrics, direct sampling) sees a smaller pool.
+    // Lights between fadeStart and radius get a linear radiance ramp to avoid
+    // popping when the camera moves. Distant (directional) lights are
+    // unaffected.
+    const bool enableDistanceCull = LightManager::distanceCullLights::enable();
+    const float cullRadiusMeters = LightManager::distanceCullLights::radiusMeters();
+    const float cullFadeStartMeters = LightManager::distanceCullLights::fadeStartMeters();
+    const float meterToWorld = RtxOptions::getMeterToWorldUnitScale();
+    const float cullRadiusWU = cullRadiusMeters * meterToWorld;
+    const float cullFadeStartWU = cullFadeStartMeters * meterToWorld;
+    const float cullRadiusSqrWU = cullRadiusWU * cullRadiusWU;
+    const Vector3 mainCameraPosWU = cameraManager.getMainCamera().getPosition(false);
+
+    // Returns a fade factor in [0, 1]:
+    //   0.0 => fully culled (do not write to GPU buffer)
+    //   1.0 => full intensity (no attenuation)
+    //   in between => linear fade band between fadeStart and radius
+    auto getDistanceFadeFactor = [&](const RtLight& light) -> float {
+      if (!enableDistanceCull || cullRadiusWU <= 0.0f) {
+        return 1.0f;
+      }
+      if (light.getType() == RtLightType::Distant) {
+        return 1.0f;
+      }
+      const Vector3 delta = light.getPosition() - mainCameraPosWU;
+      const float distSqrWU = lengthSqr(delta);
+      if (distSqrWU > cullRadiusSqrWU) {
+        return 0.0f; // beyond radius: cull
+      }
+      // No fade band (or degenerate): hard cull only.
+      if (cullFadeStartWU <= 0.0f || cullFadeStartWU >= cullRadiusWU) {
+        return 1.0f;
+      }
+      const float cullFadeStartSqrWU = cullFadeStartWU * cullFadeStartWU;
+      if (distSqrWU <= cullFadeStartSqrWU) {
+        return 1.0f; // inside fade-start: full intensity
+      }
+      const float distWU = std::sqrt(distSqrWU);
+      return (cullRadiusWU - distWU) / (cullRadiusWU - cullFadeStartWU);
+    };
+
     m_lightTypeRanges.fill(LightRange {});
     for (auto&& linearizedLight : m_linearizedLights) {
       const RtLight& light = *linearizedLight;
 
       if (light.getColorAndIntensity().w <= 0) {
+        continue;
+      }
+
+      if (getDistanceFadeFactor(light) <= 0.0f) {
         continue;
       }
 
@@ -421,7 +469,11 @@ namespace dxvk {
     for (auto&& linearizedLight : m_linearizedLights) {
       RtLight& light = *linearizedLight;
 
-      if (light.getColorAndIntensity().w > 0 && lightsWritten < m_currentActiveLightCount) {
+      // Match the count-loop's culling rules exactly so the count and the
+      // written ranges stay in sync. Order: intensity test, distance cull
+      // (fade == 0), capacity check.
+      const float fadeFactor = getDistanceFadeFactor(light);
+      if (light.getColorAndIntensity().w > 0 && fadeFactor > 0.0f && lightsWritten < m_currentActiveLightCount) {
         // Find the buffer location for this light
         LightRange& range = m_lightTypeRanges[static_cast<uint32_t>(light.getType())];
         uint32_t newBufferIdx = range.offset + range.count;
@@ -434,10 +486,12 @@ namespace dxvk {
         // Also a mapping from current light idx to previous (for unbiased resampling)
         m_lightMappingData[newBufferIdx] = light.getBufferIdx();
 
-        // Prepare data for GPU
+        // Prepare data for GPU. fadeFactor < 1.0 attenuates the light's
+        // radiance linearly across the fade band so it does not pop in/out at
+        // the cull boundary.
         size_t dataOffset = newBufferIdx * kLightGPUSize;
         assert(dataOffset < lightsGPUSize);
-        light.writeGPUData(m_lightsGPUData.data(), dataOffset);
+        light.writeGPUData(m_lightsGPUData.data(), dataOffset, fadeFactor);
 
         // Update the position in buffer for next frame
         light.setBufferIdx(newBufferIdx);

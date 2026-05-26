@@ -161,6 +161,27 @@ private:
   RTX_OPTION("rtx", bool, ignoreGamePointLights, false, "Ignores any point lights coming from the original game (lights added via toolkit still work).");
   RTX_OPTION("rtx", bool, ignoreGameSpotLights, false, "Ignores any spot lights coming from the original game (lights added via toolkit still work).");
 
+  // Distance-based light culling. Removes non-distant lights beyond a radius
+  // from the camera before they reach the GPU light buffer, so they are
+  // invisible to every lighting pass (RTXDI, NEE cache, ReSTIR GI, volumetrics,
+  // direct sampling). Helps scenes with very large authored light counts where
+  // far-away lights would otherwise contribute noise without meaningful signal.
+  // Distant (directional) lights are always kept.
+  struct distanceCullLights {
+    friend struct LightManager;
+    friend class ImGUI;
+    friend class RtxOptions;
+    RTX_OPTION_ARGS("rtx.distanceCullLights", bool, enable, false,
+                    "Enable global distance-based culling of non-distant lights (sphere, rect, disk, cylinder). Lights beyond the radius are removed from the GPU light buffer entirely, so they do not contribute to any lighting pass (RTXDI, NEE cache, ReSTIR GI, volumetrics, direct sampling). Distant (directional) lights are not affected.",
+                    args.flags = RtxOptionFlags::UserSetting);
+    RTX_OPTION_ARGS("rtx.distanceCullLights", float, radiusMeters, 50.0f,
+                    "Distance from camera (in metres) beyond which non-distant lights are culled globally from the scene. Smaller values cull more aggressively. Only applies when rtx.distanceCullLights.enable is true.",
+                    args.flags = RtxOptionFlags::UserSetting, args.minValue = 0.0f);
+    RTX_OPTION_ARGS("rtx.distanceCullLights", float, fadeStartMeters, 0.0f,
+                    "Distance (in metres) at which lights begin to fade out via linear radiance attenuation. Lights inside fadeStartMeters render at full intensity; between fadeStartMeters and radiusMeters they ramp linearly to zero; beyond radiusMeters they are culled. Set to 0 (the default) or to a value >= radiusMeters for a hard cull with no fade band. Reduces visible popping when lights enter/leave the cull radius as the camera moves.",
+                    args.flags = RtxOptionFlags::UserSetting, args.minValue = 0.0f);
+  };
+
   // Legacy light translation Options
   // The mode to determine when to create a fallback light. Never (0) never creates the light, NoLightsPresent (1) creates the fallback light only when no lights are provided to Remix, and Always (2)
   // always creates the fallback light. Primarily a debugging feature, users should create their own lights via the Remix workflow rather than relying on this feature to provide lighting.
