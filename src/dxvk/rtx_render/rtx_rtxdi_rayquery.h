@@ -132,5 +132,34 @@ namespace dxvk {
     RTX_OPTION_ARGS("rtx.di", float, outlierIntensityPercentile, 99.0f,
                     "Per-frame percentile of non-distant light luminance used as the outlier-classification threshold. 99 → top 1% brightest lights are outliers. Distant lights are ALWAYS outliers regardless of this setting.",
                     args.flags = RtxOptionFlags::UserSetting);
+    // Disocclusion-darkening guard for the MegaLights clamp. The clamp
+    // `outlier ≤ cap × main` is mathematically biased — when `main.weightSum`
+    // is zero (or very small) because no non-outlier light contributes at
+    // this pixel (e.g. disoccluded outdoor terrain lit only by the moon),
+    // the clamp says `outlier ≤ cap × 0 = 0` and clobbers the legitimate
+    // outlier contribution, causing visible darkening. When this option is
+    // true, skip the clamp entirely if `main.weightSum == 0`: the outlier
+    // IS the dominant legitimate light at this pixel and should pass
+    // through unclamped. Cost: one branch per pixel. Default true.
+    RTX_OPTION_ARGS("rtx.di", bool, preserveOutlierWhenMainEmpty, true,
+                    "When the MegaLights outlier-budget clamp would multiply outlier.weightSum by 0 (because main.weightSum is 0), skip the clamp so the outlier — which IS the legitimate dominant light at this pixel — passes through unclamped. Mitigates disocclusion-darkening at outlier-dominant pixels (e.g. outdoor moonlit terrain). Default true.",
+                    args.flags = RtxOptionFlags::UserSetting);
+    // Soft-clamp formulation. Replaces the hard `min(outlier, cap × main)`
+    // with the Reinhard-style saturation:
+    //   outlier = outlier × T / (T + outlier),  where T = cap × main
+    // Properties:
+    //   - outlier << T  → output ≈ outlier (no clamping at all)
+    //   - outlier >> T  → output → T (asymptotic saturation, identical to
+    //                                 the hard-clamp value)
+    //   - outlier ≈ T   → output = T/2 (smooth transition rather than the
+    //                                   hard-clamp corner at outlier == T)
+    // Reduces visible banding at the transition between fully-clamped
+    // outlier-dominant pixels and unclamped main-dominant pixels (the
+    // "main is small but nonzero" case where the strict empty-main guard
+    // doesn't fire). Default false — preserves the verified hard-clamp
+    // behaviour; opt-in to evaluate.
+    RTX_OPTION_ARGS("rtx.di", bool, enableOutlierSoftClamp, false,
+                    "Replace the hard `min(outlier, cap × main)` with the Reinhard-style soft saturation `outlier × T / (T + outlier)` where `T = cap × main`. Smooths the transition between clamped outlier-dominant pixels and unclamped main-dominant pixels, reducing visible banding at the boundary. Asymptotic behaviour is identical to hard-clamp (saturates at T); the difference is the curve shape near outlier ≈ T. Default false.",
+                    args.flags = RtxOptionFlags::UserSetting);
   };
 }

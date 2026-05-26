@@ -80,6 +80,20 @@ namespace dxvk {
       ImGui::Dummy({ 0,2 });
       ImGui::Unindent();
     }
+
+    if (RemixGui::CollapsingHeader("Distance Culling")) {
+      ImGui::Indent();
+      ImGui::TextWrapped("Globally remove non-distant lights beyond a radius from the camera so they do not contribute to any lighting pass (RTXDI, NEE cache, ReSTIR GI, volumetrics, direct sampling). Distant (directional) lights are not affected.");
+      ImGui::Dummy({ 0,2 });
+      RemixGui::Checkbox("Enable", &distanceCullLights::enableObject());
+      ImGui::BeginDisabled(!distanceCullLights::enable());
+      RemixGui::DragFloat("Culling Radius (m)", &distanceCullLights::radiusMetersObject(), 0.5f, 0.0f, 10000.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+      RemixGui::DragFloat("Fade Start (m)", &distanceCullLights::fadeStartMetersObject(), 0.5f, 0.0f, 10000.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+      ImGui::TextWrapped("Lights inside Fade Start render at full intensity. Between Fade Start and Culling Radius they ramp linearly to zero. Beyond Culling Radius they are removed entirely. Set Fade Start to 0 (or >= Culling Radius) for a hard cull with no fade band.");
+      ImGui::EndDisabled();
+      ImGui::Dummy({ 0,2 });
+      ImGui::Unindent();
+    }
   }
 
 
