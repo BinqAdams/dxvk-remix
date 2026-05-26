@@ -83,6 +83,9 @@ namespace dxvk {
     RemixGui::DragFloat("NRD Roughness sensitivity", &demodulateRoughnessOffsetObject(), 0.01f, 0.0f, 5.0f, "%.3f");
     RemixGui::Checkbox("Direct Light Boiling Filter", &enableDirectLightBoilingFilterObject());
     RemixGui::DragFloat("Direct Light Boiling Threshold", &directLightBoilingThresholdObject(), 0.01f, 1.f, 500.f, "%.1f");
+    RemixGui::Combo("Demodulation Mode", &modeObject(), "0: Default (per-channel clamp)\0" "1: Luminance Floor (symmetric)\0");
+    RemixGui::DragFloat("Albedo Lower Bound (mode 0)", &albedoLowerBoundObject(), 0.001f, 0.001f, 1.0f, "%.4f", ImGuiSliderFlags_AlwaysClamp);
+    RemixGui::DragFloat("Albedo Luminance Floor (mode 1)", &albedoLuminanceFloorObject(), 0.001f, 0.001f, 1.0f, "%.4f", ImGuiSliderFlags_AlwaysClamp);
   }
 
   void DemodulatePass::dispatch(RtxContext* ctx, const Resources::RaytracingOutput& rtOutput) {

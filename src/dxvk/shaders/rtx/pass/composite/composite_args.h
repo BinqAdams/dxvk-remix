@@ -109,6 +109,6 @@ struct CompositeArgs {
 
   float alphaBlendSurfacePackMult; // for packing/unpacking hitT into Float16 in AlphaBlendSurface
   float postFilterThreshold;
-  float pad1;
-  float pad2;
+  uint demodulateMode;                  // see kDemodulationMode* in demodulate_helpers.slangh
+  float demodulateAlbedoLuminanceFloor; // BT.709 luminance floor for the effective albedo when demodulateMode == 1
 };

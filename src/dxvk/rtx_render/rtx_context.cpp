@@ -1148,6 +1148,9 @@ namespace dxvk {
     constants.useIntersectionBillboardsOnPrimaryRays = RtxOptions::useIntersectionBillboardsOnPrimaryRays() && constants.enableBillboardOrientationCorrection;
     constants.enableDirectLightBoilingFilter = m_common->metaDemodulate().enableDirectLightBoilingFilter() && RtxOptions::useRTXDI();
     constants.directLightBoilingThreshold = m_common->metaDemodulate().directLightBoilingThreshold();
+    constants.demodulateAlbedoLowerBound = m_common->metaDemodulate().albedoLowerBound();
+    constants.demodulateMode = m_common->metaDemodulate().mode();
+    constants.demodulateAlbedoLuminanceFloor = m_common->metaDemodulate().albedoLuminanceFloor();
     constants.translucentDecalAlbedoFactor = RtxOptions::translucentDecalAlbedoFactor();
     constants.enablePlayerModelInPrimarySpace = RtxOptions::PlayerModel::enableInPrimarySpace();
     constants.enablePlayerModelPrimaryShadows = RtxOptions::PlayerModel::enablePrimaryShadows();

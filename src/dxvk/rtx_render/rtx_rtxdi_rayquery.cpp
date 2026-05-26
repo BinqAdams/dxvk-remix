@@ -299,6 +299,10 @@ namespace dxvk {
       ImGui::TextWrapped("Cap ratio: outlier.weightSum ≤ cap × main.weightSum. Lower → more aggressive clamp (darker when outliers are the dominant light); higher → more residual sparkle indoors. 0.33 ≈ MegaLights' 25%% post-merge.");
       RemixGui::SliderFloat("Outlier Intensity Percentile", &outlierIntensityPercentileObject(), 50.0f, 100.0f);
       ImGui::TextWrapped("Per-frame percentile of non-distant light luminance used as the outlier-classification threshold. 99 → top 1%% brightest are outliers. Distant lights are always outliers regardless of this value.");
+      RemixGui::Checkbox("Preserve Outlier When Main Empty", &preserveOutlierWhenMainEmptyObject());
+      ImGui::TextWrapped("When `main.weightSum == 0` (no non-outlier light contributes at this pixel — e.g. disoccluded outdoor terrain lit only by the moon), skip the clamp so the outlier passes through unclamped. Mitigates disocclusion-darkening at outlier-dominant pixels.");
+      RemixGui::Checkbox("Soft Clamp (Reinhard saturation)", &enableOutlierSoftClampObject());
+      ImGui::TextWrapped("Replace the hard `min(outlier, cap × main)` with `outlier × T / (T + outlier)` where `T = cap × main`. Smooth saturation curve — same asymptotic clamp value as the hard formulation, but no sharp corner at `outlier == T`. Mitigates the 'main is small but nonzero' case where the strict empty-main guard doesn't fire.");
       ImGui::Unindent();
     }
     RemixGui::Checkbox("Apply Master Reservoir Finalize (W_R fix)", &enableMasterReservoirFinalizeObject());
@@ -352,6 +356,8 @@ namespace dxvk {
     rtOutput.m_raytraceArgs.enableRtxdiInitialVisibility = enableInitialVisibility();
     rtOutput.m_raytraceArgs.enableRtxdiMasterReservoirFinalize = enableMasterReservoirFinalize();
     rtOutput.m_raytraceArgs.enableRtxdiOutlierBudgetClamp = enableOutlierBudgetClamp();
+    rtOutput.m_raytraceArgs.enableRtxdiPreserveOutlierWhenMainEmpty = preserveOutlierWhenMainEmpty();
+    rtOutput.m_raytraceArgs.enableRtxdiOutlierSoftClamp = enableOutlierSoftClamp();
     rtOutput.m_raytraceArgs.rtxdiOutlierWeightCap = outlierWeightCap();
     // rtxdiOutlierIntensityThreshold is populated by LightManager::setRaytraceArgs
     // from the per-frame percentile of non-distant light luminance.

@@ -118,10 +118,38 @@ void main(int2 threadIndex : SV_DispatchThreadID)
     // outliers, matching Epic's MegaLights 20-25% directional-light cap.
     // Gated by cb.enableRtxdiOutlierBudgetClamp so the previous behaviour
     // (no clamp) can be restored for A/B comparison.
+    //
+    // The clamp is mathematically biased — `outlier ≤ cap × main` clobbers
+    // the outlier whenever `main.weightSum` is zero (no non-outlier light
+    // contributes at this pixel, e.g. disoccluded outdoor terrain lit only
+    // by the moon). When cb.enableRtxdiPreserveOutlierWhenMainEmpty is set,
+    // skip the clamp in that case so the outlier — which IS the legitimate
+    // dominant light at this pixel — passes through unclamped.
     if (cb.enableRtxdiOutlierBudgetClamp)
     {
-      outlierState.weightSum = min(outlierState.weightSum,
-                                   cb.rtxdiOutlierWeightCap * state.weightSum);
+      const bool mainEmpty = (state.weightSum <= 0.0f);
+      if (!(mainEmpty && cb.enableRtxdiPreserveOutlierWhenMainEmpty))
+      {
+        const float target = cb.rtxdiOutlierWeightCap * state.weightSum;
+        if (cb.enableRtxdiOutlierSoftClamp)
+        {
+          // Reinhard-style soft saturation: outlier × target / (target + outlier).
+          // Asymptote is target (same clamp value as the hard formulation);
+          // curve passes through target/2 at outlier == target; smooth
+          // everywhere. Handles target == 0 cleanly by collapsing to zero
+          // (only reachable when preserveOutlierWhenMainEmpty is disabled,
+          // since otherwise the outer mainEmpty branch has already skipped).
+          const float denom = target + outlierState.weightSum;
+          outlierState.weightSum = (denom > 0.0f)
+            ? (outlierState.weightSum * target / denom)
+            : 0.0f;
+        }
+        else
+        {
+          // Hard clamp (original MegaLights formulation).
+          outlierState.weightSum = min(outlierState.weightSum, target);
+        }
+      }
     }
     const float outlierMergeRnd = RAB_GetNextRandom(rng);
     RTXDI_CombineReservoirs(state, outlierState, outlierMergeRnd, outlierState.targetPdf);
