@@ -154,6 +154,13 @@ namespace dxvk {
     // the actual swapchain is sized to hold N interpolated frames + 1 rendered frame
     uint32_t m_appRequestedImageCount = 0;
 
+    // Multiplier value (= dlfgInterpolatedFrameCount() result) at the time of the
+    // current swap chain creation. swapchainAcquire() compares the current multiplier
+    // against this to detect runtime multiplier changes — comparing against the
+    // driver-actual m_info.imageCount is wrong because the driver routinely returns
+    // caps.minImageCount + 1 > requested, producing a permanent mismatch under FIFO.
+    uint32_t m_creationInterpolatedFrameCount = 0;
+
     std::vector<Rc<DxvkImage>> m_backbufferImages;
     std::vector<Rc<DxvkImageView>> m_backbufferViews;
     std::vector<Rc<RtxSemaphore>> m_backbufferAcquireSemaphores;

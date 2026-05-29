@@ -247,12 +247,19 @@ namespace dxvk {
     // Allocate only as many swapchain images as the configured multiplier needs (interpolated + 1 rendered),
     // rather than always allocating the hardware maximum. Swapchain will be recreated if the user increases
     // the multiplier at runtime (see acquireNextImage).
-    adjustedDesc.imageCount = m_ctx->dlfgInterpolatedFrameCount() + 1;
-    
+    const uint32_t multiplierAtCreation = m_ctx->dlfgInterpolatedFrameCount();
+    adjustedDesc.imageCount = multiplierAtCreation + 1;
+
     VkResult res = vk::Presenter::recreateSwapChain(adjustedDesc);
     if (res != VK_SUCCESS) {
       return res;
     }
+
+    // Record the multiplier so swapchainAcquire can detect a runtime change without
+    // comparing against m_info.imageCount (which the Vulkan driver may have bumped
+    // up to caps.minImageCount + 1 — producing a false-positive mismatch on every
+    // frame and an unbreakable swap-chain-recreate loop).
+    m_creationInterpolatedFrameCount = multiplierAtCreation;
     
     // Reset present status since we recreated the swapchain. This ensures we try to acquire
     // during the next present instead of returning a stale error value.
@@ -380,12 +387,19 @@ namespace dxvk {
       return false;
     }
 
-    // If the frame generation multiplier changed, the swapchain image count no longer matches.
-    // Return VK_ERROR_OUT_OF_DATE_KHR to force recreation. Checking here on the present thread
-    // (rather than on the CS thread) ensures no command list waits/signals or presents get
-    // submitted against the old swapchain semaphores.
-    const uint32_t neededImages = m_ctx->dlfgInterpolatedFrameCount() + 1;
-    if (neededImages != m_info.imageCount) {
+    // If the frame generation multiplier changed at runtime, force a swap-chain
+    // recreation. Compare against the multiplier value captured when this swap chain
+    // was built (m_creationInterpolatedFrameCount), NOT against m_info.imageCount —
+    // the Vulkan driver may have returned more images than we requested (typically
+    // caps.minImageCount + 1 under FIFO present mode in pickImageCount), which would
+    // produce a permanent mismatch and an unbreakable swap-chain-recreate loop on
+    // every Present.
+    //
+    // Checking here on the present thread (rather than on the CS thread) ensures no
+    // command list waits/signals or presents get submitted against the old swapchain
+    // semaphores.
+    const uint32_t currentMultiplier = m_ctx->dlfgInterpolatedFrameCount();
+    if (currentMultiplier != m_creationInterpolatedFrameCount) {
       m_lastPresentStatus = VK_ERROR_OUT_OF_DATE_KHR;
       return false;
     }
