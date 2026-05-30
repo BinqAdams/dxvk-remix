@@ -116,19 +116,29 @@ lss::Skeleton generateSkeleton(const size_t numBones,
                                const size_t bonesPerVertex,
                                const lss::Buf<lss::Pos>& points,
                                const lss::Buf<lss::BlendWeight>* weights,
-                               const lss::Buf<lss::BlendIdx>* indices) {
-  lss::Skeleton output; 
+                               const lss::Buf<lss::BlendIdx>* indices,
+                               const bool useIdentityBindPose) {
+  lss::Skeleton output;
   output.bindPose.resize(numBones);
   output.restPose.resize(numBones);
   output.jointNames.resize(numBones);
 
-  pxr::VtMatrix4dArray boneXforms;
-  std::vector<pxr::GfVec3d> weightedPosSums;
-  std::vector<float> totalWeights(numBones, 0);
-  weightedPosSums.resize(numBones);
-  const float equalBlend = 1.f / bonesPerVertex;
+  if (numBones > 0 && useIdentityBindPose) {
+    // Engines that upload bone matrices as world-from-bind (e.g. PainEngine)
+    // expect the bind/rest pose to be identity so the USD-side skinning math
+    // (world = jointXform * inverse(bindPose) * localVert) reduces to
+    // (world = jointXform * localVert), matching the in-engine convention.
+    for (size_t i = 0; i < numBones; ++i) {
+      output.bindPose[i].SetIdentity();
+      output.restPose[i].SetIdentity();
+    }
+  } else if (numBones > 0) {
+    pxr::VtMatrix4dArray boneXforms;
+    std::vector<pxr::GfVec3d> weightedPosSums;
+    std::vector<float> totalWeights(numBones, 0);
+    weightedPosSums.resize(numBones);
+    const float equalBlend = 1.f / bonesPerVertex;
 
-  if (numBones > 0) {
     for (int i = 0; i < points.size(); ++i) {
       for (int j = 0; j < bonesPerVertex; ++j) {
         const float weight = weights == nullptr ? equalBlend : (*weights)[i * bonesPerVertex + j];
@@ -504,7 +514,8 @@ void GameExporter::exportSkeletons(const Export& exportData, ExportContext& ctx)
                                              mesh.bonesPerVertex,
                                              mesh.buffers.positionBufs.begin()->second,
                                              mesh.buffers.blendWeightBufs.empty() ? nullptr : &mesh.buffers.blendWeightBufs.begin()->second,
-                                             mesh.buffers.blendIndicesBufs.empty() ? nullptr : &mesh.buffers.blendIndicesBufs.begin()->second);
+                                             mesh.buffers.blendIndicesBufs.empty() ? nullptr : &mesh.buffers.blendIndicesBufs.begin()->second,
+                                             exportData.meta.useIdentityBindPose);
     const Skeleton& skel = ctx.skeletons[meshId];
     // pxr::VtMatrix4dArray identities(mesh.numBones, pxr::GfMatrix4d(1));
     bindTransformsAttr.Set(skel.bindPose);
