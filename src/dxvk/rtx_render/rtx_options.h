@@ -1230,6 +1230,22 @@ namespace dxvk {
     RTX_OPTION("rtx", float, captureMeshTexcoordDelta, 0.3f, "Inter-frame texcoord min delta warrants new time sample.");
     RTX_OPTION("rtx", float, captureMeshColorDelta, 0.3f, "Inter-frame color min delta warrants new time sample.");
     RTX_OPTION("rtx", float, captureMeshBlendWeightDelta, 0.01f, "Inter-frame blend weight min delta warrants new time sample.");
+    RTX_OPTION("rtx", bool, captureUseIdentityBindPose, false,
+               "When capturing skinned meshes, write identity matrices for the USD bind/rest pose\n"
+               "instead of estimating them from per-bone vertex centroids.\n"
+               "\n"
+               "Use this for games whose bone matrices are already 'world-from-bind' (i.e. the\n"
+               "vertex data is in each bone's local bind space and the engine uploads the bone's\n"
+               "current world transform with no separate inverse-bind multiply in the shader).\n"
+               "Painkiller / PainEngine is the canonical example.\n"
+               "\n"
+               "When false (default), Remix estimates each joint's bind position as the weighted\n"
+               "centroid of the vertices it influences. That approximation only happens to look\n"
+               "right when the engine's runtime skinning math expects the bind pose to absorb\n"
+               "those translations (e.g. Half-Life 2 / Source). For engines that already bake the\n"
+               "bind pose into the vertex data, the centroid translations show up as a per-joint\n"
+               "offset, causing T-pose-at-origin captures and bones collapsed toward the origin\n"
+               "in the Remix Toolkit.");
 
     RTX_OPTION("rtx", bool, useVirtualShadingNormalsForDenoising, true,
                "A flag to enable or disable the usage of virtual shading normals for denoising passes.\n"
