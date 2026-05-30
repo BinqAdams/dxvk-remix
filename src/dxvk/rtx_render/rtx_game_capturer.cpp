@@ -1071,6 +1071,7 @@ namespace dxvk {
       }
     }
     exportPrep.meta.bCorrectBakedTransforms = false;
+    exportPrep.meta.useIdentityBindPose = RtxOptions::captureUseIdentityBindPose();
 
     exportPrep.debugId = cap.idStr;
     exportPrep.baseExportPath = BASE_DIR;

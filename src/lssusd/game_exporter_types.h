@@ -215,6 +215,7 @@ struct Export {
     bool isZUp;
     std::unordered_map<std::string, std::string> renderingSettingsDict;
     bool bCorrectBakedTransforms;
+    bool useIdentityBindPose = false; // when true, skeleton bind/rest pose = identity (skip centroid estimation)
   } meta;
   std::string baseExportPath;
   bool bExportInstanceStage;
