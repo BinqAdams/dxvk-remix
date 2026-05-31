@@ -804,6 +804,19 @@ namespace dxvk {
 
       m_framesWithoutValidScene = 0;
     } else {
+      // RT isn't engaged this frame (e.g. a 2D menu with no valid 3D camera).
+      // submitTexturesToDeviceLocal() above only runs inside the RT block, so
+      // rasterized texture replacements (menus/UI) would have their textures
+      // scheduled but never uploaded to the GPU on these frames, staying
+      // un-resident forever. When rtx.replaceRasterizedTextures is enabled, run
+      // the minimal texture submit here too so scheduled replacement loads
+      // become resident and can be sampled by the rasterized draw next frame.
+      if (RtxOptions::replaceRasterizedTextures()) {
+        this->spillRenderPass(false);
+        getCommonObjects()->getTextureManager().submitTexturesToDeviceLocal(this, m_execBarriers, m_execAcquires);
+        m_execBarriers.recordCommands(m_cmd);
+      }
+
       // If raytracing is only disabled because we don't have shaders available, we don't want to clear the scene.
       // This frequently happens for a single frame when a cached shader is being fetched, and causes the Logic 
       // graph state to be reset - which is problematic since Logic graphs often trigger shader fetches.
@@ -2716,6 +2729,34 @@ namespace dxvk {
     mode.colorSrcFactor = src;
     mode.colorDstFactor = dst;
     return mode;
+  }
+
+  Rc<DxvkImageView> RtxContext::getRasterizedTextureReplacement(XXH64_hash_t textureHash) {
+    // Mirror the replacement lookup the ray-traced material path and
+    // rasterizeSky() use: find an opaque replacement material for this texture
+    // hash, demand-load its albedo, and return the resident image view. The
+    // rasterized UI/menu path otherwise binds the original game texture, so a
+    // registered replacement loads (shows in the dev menu) but is never sampled.
+    MaterialData* replacementMaterial =
+      getSceneManager().getAssetReplacer()->getReplacementMaterial(textureHash);
+    if (replacementMaterial == nullptr || replacementMaterial->getType() != MaterialDataType::Opaque)
+      return nullptr;
+
+    // Non-const ref: trackTexture promotes/streams the texture for loading.
+    TextureRef& albedoOpacity = replacementMaterial->getOpaqueMaterialData().getAlbedoOpacityTexture();
+    if (!albedoOpacity.isValid())
+      return nullptr;
+
+    // Demand-load the replacement albedo. On RT-disengaged frames (menus) the
+    // GPU upload is driven by the matching submitTexturesToDeviceLocal() call in
+    // the non-raytraced frame path; until the texture is resident this returns
+    // nullptr and the original is sampled for a frame or two.
+    uint32_t textureIndex;
+    getSceneManager().trackTexture(albedoOpacity, textureIndex, true, false);
+    if (albedoOpacity.isImageEmpty())
+      return nullptr;
+
+    return albedoOpacity.getImageView();
   }
 
   void RtxContext::rasterizeSky(const DrawParameters& params, const DrawCallState& drawCallState) {
