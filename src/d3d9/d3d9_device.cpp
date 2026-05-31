@@ -6416,7 +6416,20 @@ namespace dxvk {
       cSlot = slot,
       cImageView = commonTex->GetSampleView(srgb)
     ](DxvkContext* ctx) {
-      ctx->bindResourceView(cSlot, cImageView, nullptr);
+      Rc<DxvkImageView> view = cImageView;
+      // Apply texture/material replacements to rasterized (UI/menu) draws too.
+      // The ray-traced and sky-rasterized paths already substitute replacements;
+      // the general rasterized path otherwise samples the original game texture,
+      // so UI replacements load but never show. Only swaps the sampled view
+      // (geometry/UVs/blend unchanged). Gated + default off; only textures with
+      // a registered replacement incur the lookup's tracking cost.
+      if (RtxOptions::replaceRasterizedTextures() && cImageView != nullptr) {
+        Rc<DxvkImageView> replacement =
+          static_cast<RtxContext*>(ctx)->getRasterizedTextureReplacement(cImageView->image()->getHash());
+        if (replacement != nullptr)
+          view = replacement;
+      }
+      ctx->bindResourceView(cSlot, view, nullptr);
     });
   }
 
