@@ -113,6 +113,13 @@ namespace dxvk {
     void commitGeometryToRT(const DrawParameters& params, DrawCallState& drawCallState);
     void commitExternalGeometryToRT(std::unique_ptr<ExternalDrawState> state);
 
+    // Returns the replacement albedo image view registered for `textureHash`
+    // (demand-loading it), or nullptr if there is no opaque replacement or it
+    // is not yet resident. Used to apply texture replacements on the rasterized
+    // (UI/menu) draw path, which otherwise samples the original game texture.
+    // See rtx.replaceRasterizedTextures.
+    Rc<DxvkImageView> getRasterizedTextureReplacement(XXH64_hash_t textureHash);
+
     static void blitImageHelper(Rc<DxvkContext> ctx, const Rc<DxvkImage>& srcImage, const Rc<DxvkImage>& dstImage, VkFilter filter);
 
     virtual void flushCommandList() override;

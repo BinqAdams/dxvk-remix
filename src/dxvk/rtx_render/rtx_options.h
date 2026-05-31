@@ -208,6 +208,10 @@ namespace dxvk {
                   "Hack/workaround option for dynamic world space UI textures with a coplanar background.\n"
                   "Apply to backgrounds if the foreground material is a dynamic world texture rendered in UI that is unpredictable and rapidly changing.\n"
                   "This offsets the background texture backwards.");
+    RTX_OPTION("rtx", bool, replaceRasterizedTextures, false,
+                  "Apply texture/material replacements to rasterized draw calls (screen-space UI / menus), not just ray-traced and sky-rasterized geometry.\n"
+                  "By default a replacement registered for a UI texture loads but is never sampled: the rasterized UI path binds the original game texture. With this enabled, when a rasterized draw binds a texture that has an opaque replacement material, the replacement's albedo is bound instead - same screen geometry and UVs, just higher-resolution texels - so higher-res UI/menu art appears at the original on-screen layout.\n"
+                  "Only textures that actually have a registered replacement are affected. Adds a per-texture-bind replacement lookup while enabled; default off.");
     RTX_OPTION("rtx", fast_unordered_set, hideInstanceTextures, {},
                   "Textures on draw calls that should be hidden from rendering, but not totally ignored.\n"
                   "This is similar to rtx.ignoreTextures but instead of completely ignoring such draw calls they are only hidden from rendering, allowing for the hidden objects to still appear in captures.\n"
