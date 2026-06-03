@@ -58,7 +58,7 @@ namespace dxvk {
   // NV-DXVK start: DLFG integration
   bool DxvkContext::isDLFGEnabled() const {
     ScopedCpuProfileZone();
-    return m_common->metaNGXContext().supportsDLFG() && DxvkDLFG::enable() && !m_common->metaDLFG().hasDLFGFailed();
+    return m_common->metaNGXContext().supportsDLFG() && DxvkDLFG::enable() && !DxvkDLFG::suspendForMenu() && !m_common->metaDLFG().hasDLFGFailed();
   }
 
   uint32_t DxvkContext::dlfgInterpolatedFrameCount() const {
