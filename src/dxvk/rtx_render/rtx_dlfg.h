@@ -294,6 +294,7 @@ namespace dxvk {
                     args.minValue = 1, args.maxValue = 6,
                     args.flags = RtxOptionFlags::UserSetting);
     RTX_OPTION("rtx.dlfg", bool, enablePresentMetering, true, "Use hardware present metering for DLSS 4.0 frame generation instead of CPU pacing.");
+    RTX_OPTION("rtx.dlfg", bool, suspendForMenu, false, "Transient frame-generation suspend driven by an external controller (e.g. the game-side remix-comp-proxy while the game is in a menu / loading screen / cutscene). ANDed with 'enable' in isDLFGEnabled(): FG runs only when the user has enabled it AND nothing is suspending it. Kept separate from 'enable' so a runtime suspend never overwrites the user's own FG on/off choice (the proxy cannot read 'enable' back across the bridge). Not a user setting.");
 
   private:
     std::unique_ptr<NGXDLFGContext> m_dlfgContext = nullptr;
