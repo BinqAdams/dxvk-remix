@@ -20,6 +20,7 @@
 * DEALINGS IN THE SOFTWARE.
 */
 #include "rtx_draw_call_cache.h"
+#include "rtx_options.h"
 #include "../d3d9/d3d9_state.h"
 
 namespace dxvk 
@@ -84,8 +85,31 @@ DrawCallCache::CacheState DrawCallCache::get(const DrawCallState& drawCall, Blas
   // Bucket has multiple BlasEntries
 
   float bestScore = std::numeric_limits<float>::min();
-  Matrix4 newTransform = drawCall.getTransformData().objectToWorld;
-  const Vector3 newWorldPosition = drawCall.getGeometryData().boundingBox.getTransformedCentroid(newTransform);
+
+  // Instance-pairing position. The lengthSqr distance term below decides which BlasEntry an incoming
+  // draw maps to among same-TopologicalHash siblings (a swarm of same-type meshes). For world-space-
+  // bone skinning (e.g. an indexed-blend path that bakes world placement into the bones and leaves
+  // objectToWorld identity) every instance of a mesh shares an identical bind-pose bbox AND an
+  // identity transform, so getTransformedCentroid(objectToWorld) is the SAME point for every instance
+  // -> the tiebreaker collapses, instances get assigned to entries by draw order, and a distance-
+  // sorted draw order shuffles as the camera moves -> each instance momentarily inherits a sibling's
+  // (or a fresh, empty) motion history -> a distance-swept one-frame motion-vector smear. Transform
+  // the bbox by a representative WORLD-SPACE bone instead: distinct per instance and smoothly moving,
+  // so the nearest-position match is stably the same instance frame to frame (blas.input holds last
+  // frame's bones, refreshed at SceneManager::onSceneObjectUpdated). Gated to
+  // assumeWorldSpaceSkinnedBones; object-space-bone games keep the standard objectToWorld centroid.
+  // Read the option once -- RtxOption::operator() locks a global mutex per read and the value is
+  // loop-invariant across the candidate scan below.
+  const bool worldSpaceBones = RtxOptions::assumeWorldSpaceSkinnedBones();
+  auto pairingCentroid = [worldSpaceBones](const DrawCallState& dc) -> Vector3 {
+    const SkinningData& sk = dc.getSkinningState();
+    if (worldSpaceBones &&
+        sk.numBones > sk.minBoneIndex && sk.minBoneIndex < sk.pBoneMatrices.size()) {
+      return dc.getGeometryData().boundingBox.getTransformedCentroid(sk.pBoneMatrices[sk.minBoneIndex]);
+    }
+    return dc.getGeometryData().boundingBox.getTransformedCentroid(dc.getTransformData().objectToWorld);
+  };
+  const Vector3 newWorldPosition = pairingCentroid(drawCall);
 
   for (auto bucketIter = range.first; bucketIter != range.second; bucketIter++) {
     BlasEntry& blas  = bucketIter->second;
@@ -108,10 +132,10 @@ DrawCallCache::CacheState DrawCallCache::get(const DrawCallState& drawCall, Blas
     if (blas.input.getMaterialData().getHash() == drawCall.getMaterialData().getHash()) {
       score += 1000.f;
     }
-    // TODO this is only checking the distance to the first instance that created the BlasEntry, not to
-    // each instance.  It also doesn't include the portal logic from InstanceManager.
-    Matrix4 oldTransform = blas.input.getTransformData().objectToWorld;
-    const Vector3 worldPosition = blas.input.getGeometryData().boundingBox.getTransformedCentroid(oldTransform);
+    // Doesn't include the portal logic from InstanceManager. blas.input is refreshed each frame
+    // (SceneManager::onSceneObjectUpdated), so pairingCentroid reads this candidate's last-frame
+    // position -> one-frame distance for the same instance, large distance for a different one.
+    const Vector3 worldPosition = pairingCentroid(blas.input);
     score -= lengthSqr(newWorldPosition - worldPosition);
     if (score > bestScore) {
       bestScore = score;

@@ -334,7 +334,10 @@ namespace dxvk {
       assert(skinningData.numBonesPerVertex <= 4);
 
       const auto fusedMode = RtxOptions::fusedWorldViewMode();
-      if (pLastCamera != nullptr) {
+      // assumeWorldSpaceSkinnedBones: the game uploads world-space bone matrices (world placement is
+      // baked into the bones), so objectToWorld must collapse to identity rather than be reconstructed
+      // from the last-set camera — the same identity result the pLastCamera==null fallback produces.
+      if (pLastCamera != nullptr && !RtxOptions::assumeWorldSpaceSkinnedBones()) {
         if (likely(fusedMode == FusedWorldViewMode::None)) {
           transformData.objectToView = transformData.worldToView;
           // Do not bother when transform is fused. Camera matrices are identity and so is worldToView.
