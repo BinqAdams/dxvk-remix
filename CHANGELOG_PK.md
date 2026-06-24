@@ -3,8 +3,10 @@
 This fork (`pk-integration`) carries Painkiller-RTX-specific renderer + bridge changes on top of
 NVIDIA's dxvk-remix. Newest first; folded into the unified PKRTX Steam build changelog.
 
-## Unreleased  (pk-integration)
+## 0.3.4 - 2026-06-24  (pk-integration @ 2e0339e8, rebased onto upstream main f3cf833a)
 - DrawCallCache: pair world-space-bone skinned instances by a representative bone's world position (`rtx.assumeWorldSpaceSkinnedBones`, new, default off). For PK's world-space bones every same-type enemy shares an identical bind-pose centroid under identity `objectToWorld`, so the cache tiebreaker (`getTransformedCentroid(objectToWorld)`) could not disambiguate a crowd and instances aliased by draw order → a distance-swept one-frame motion-vector smear on skinned enemies. The option also collapses skinned `objectToWorld` to identity (world placement lives in the bones). Object-space-bone games are unaffected (default off). Root cause + verification: `patches/Painkiller/findings/flicker-rootcause/SWARM-PAIRING-CENTROID.md`.
+- Advanced the PK fork to NVIDIA dxvk-remix `main` (f3cf833a): picks up [REMIX-5501] particle-system stale-clump fix and [REMIX-5604] clear previous transform for newly preserved instances (motion-vector correctness on the preserve path).
+- Renderer + bridge rebuilt as a matched pair from the same tree (`remix-main+2e0339e8`); PDBs shipped.
 
 ## 0.3.3 - 2026-06-17  (pk-integration @ 7af28ddb, rebased onto upstream main 2522e69a)
 - Rebased the PK fork onto NVIDIA dxvk-remix upstream `main` (2522e69a): picks up the post-processing / composite refactor + REMIX-5261 fixes (+24 upstream commits).
