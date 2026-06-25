@@ -812,6 +812,16 @@ namespace dxvk {
         }
 
         if (particleSystem.particleCount == 0) {
+          if (externallyFed) {
+            // No particles were fed this frame. submitDrawState() ran earlier in
+            // the frame using the previous frame's particleCount, so it may have
+            // submitted a draw backed by last frame's (now stale) vertices. The
+            // fed count can drop N->0 in a single frame (unlike native systems,
+            // which decay via TTL), so clear the vertex buffer here to make those
+            // quads degenerate instead of lingering one extra frame.
+            const Rc<DxvkBuffer>& vb = system.second->getVertexBuffer();
+            ctx->clearBuffer(vb, 0, vb->info().size, 0);
+          }
           if (!isNumParticlesConstant) {
             conservativeCount->postSimulation(ctx, frameIdx);
           }
