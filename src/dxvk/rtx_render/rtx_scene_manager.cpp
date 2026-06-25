@@ -1355,6 +1355,17 @@ namespace dxvk {
       return nullptr;
     }
 
+    // Legacy billboard-particle fast path (opt-in): reconstruct classic FFP sprite
+    // particles into a per-material RtxParticleSystem (one batched refit BLAS) instead
+    // of merging hundreds of per-draw billboards into a BLAS rebuilt every frame.
+    // Returning nullptr keeps the source draw out of the scene entirely (no BlasEntry,
+    // no instance, no merged-BLAS contribution).
+    if (RtxParticleSystemManager::reconstructLegacyParticles() &&
+        RtxParticleSystemManager::isReconstructibleBillboardParticle(drawCallState)) {
+      device()->getCommon()->metaParticleSystem().feedExternalParticleDraw(ctx.ptr(), drawCallState, renderMaterialData);
+      return nullptr;
+    }
+
     ObjectCacheState result = ObjectCacheState::kInvalid;
     BlasEntry* pBlas = nullptr;
     if (m_drawCallCache.get(drawCallState, &pBlas) == DrawCallCache::CacheState::kExisted) {

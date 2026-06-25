@@ -73,6 +73,17 @@ namespace dxvk {
       void postSimulation(DxvkContext* ctx, uint32_t frameIdx);
     };
 
+    // One legacy billboard-particle draw captured for GPU reconstruction this frame.
+    // The RasterBuffer copies keep the underlying source GPU buffers alive until the
+    // reconstruct pass runs in simulate().
+    struct FedDraw {
+      RasterBuffer positionBuffer;
+      RasterBuffer color0Buffer;
+      RasterBuffer texcoordBuffer;
+      uint32_t numQuads = 0;
+      uint32_t baseParticleIndex = 0;
+    };
+
     struct ParticleSystem {
     private:
       Rc<DxvkBuffer> m_particles;
@@ -110,16 +121,17 @@ namespace dxvk {
 
       uint32_t generationIdx = 0;
 
-      // --- Externally-fed (CPU-simulated) path -----------------------------
-      // When set, this system's particle STATE is supplied by the host/proxy
-      // each frame (the game already simulated it) instead of the GPU
-      // spawn/evolve passes. simulate() then runs ONLY generate_geometry over
-      // the uploaded particles, reusing the same pooled-buffer -> single-BLAS
-      // handoff. fedParticleStaging holds raw GpuParticle records (48B each).
+      // --- Externally-fed (reconstructed legacy particle) path -------------
+      // When set, this system's particle STATE is reconstructed GPU-side from the
+      // game's own already-simulated billboard draws (see feedExternalParticleDraw)
+      // instead of the GPU spawn/evolve passes. simulate() reconstructs each
+      // accumulated source draw into the particle buffer, then runs ONLY
+      // generate_geometry, reusing the same pooled-buffer -> single-BLAS handoff.
       bool externallyFed = false;
       bool fedThisFrame = false;
-      uint32_t fedParticleCount = 0;
-      std::vector<uint8_t> fedParticleStaging;
+      uint32_t fedParticleCount = 0;             // total reconstructed particles this frame
+      uint32_t fedFrameId = kInvalidFrameIndex;  // frame whose draws are accumulated
+      std::vector<FedDraw> fedDraws;             // source draws to reconstruct in simulate()
 
       ParticleSystem() = delete;
       ParticleSystem(const RtxParticleSystemDesc& desc, const MaterialData& matData, const LegacyMaterialData& legacyMatData, const CategoryFlags& cats, const uint32_t seed);
@@ -186,9 +198,18 @@ namespace dxvk {
     std::vector<SpawnContext> m_spawnContexts;
     bool m_initialized = false;
 
+    // Cached descriptor shared by all reconstructed legacy-particle systems
+    // (see feedExternalParticleDraw); rebuilt when the capacity option changes.
+    RtxParticleSystemDesc m_reconstructedDesc;
+    XXH64_hash_t m_reconstructedDescHash = kEmptyHash;
+    bool m_reconstructedDescValid = false;
+    const RtxParticleSystemDesc& getReconstructedDesc();
+
     RTX_OPTION("rtx.particles", bool, enable, true, "Enables particle simulation and rendering.");
     RTX_OPTION("rtx.particles", bool, enableSpawning, true, "Controls whether or not any particle system can currently spawn new particles.");
     RTX_OPTION("rtx.particles", float, timeScale, 1.f, "Time modifier, can be used to slow/speed up time.");
+    RTX_OPTION("rtx.particles", bool, reconstructLegacyParticles, false, "Reconstruct legacy fixed-function billboard particles (classic game sprite particles) into the RtxParticleSystem fast path. Each particle draw's quads are rebuilt into GpuParticles GPU-side and rendered as one batched refit BLAS per material, instead of merging hundreds of per-draw billboards into a BLAS that is fully rebuilt every frame. The source draws are dropped from the rasterized/BLAS path. Opt-in; tuned for FFP XYZ|DIFFUSE|TEX1 billboard particles.");
+    RTX_OPTION("rtx.particles", uint32_t, reconstructLegacyParticlesMaxPerMaterial, 65536, "Capacity (particles per material per frame) of the reconstructed-particle state buffer. Source draws beyond this for a given material are dropped for that frame.");
 
     RTX_OPTION("rtx.particles.globalPreset", int, spawnRatePerSecond, 100, "Number of particles (per system) to spawn per second on average.");
     RTX_OPTION("rtx.particles.globalPreset", float, spawnBurstDuration, 0.f, "Number of seconds between particle spawning bursts.  For a value of 0, we assume continuous spawning, for all values greater than 0 we expect particles to be spawned in bursts.  This value will still respect the spawn rate per second parameter and the max particle parameter.");
@@ -304,18 +325,26 @@ namespace dxvk {
     void simulate(RtxContext* ctx);
 
     /**
-      * Feed externally-simulated particle state (host/proxy-provided) for one
-      * material this frame, bypassing the GPU spawn/evolve passes. The records
-      * must match the GpuParticle GPU layout (48B each). simulate() uploads them
-      * and runs only geometry generation + the normal single-BLAS handoff, so
-      * the game's already-simulated particles render via the fast batched path.
+      * Accumulate one legacy fixed-function billboard-particle draw for GPU
+      * reconstruction into a per-material particle system. Call from
+      * SceneManager::processDrawCallState for draws matching
+      * isReconstructibleBillboardParticle(); the caller should then drop the source
+      * draw (return nullptr) so it does not also build into the per-draw merged BLAS.
+      * The accumulated draws are reconstructed into GpuParticle records GPU-side
+      * during simulate() and rendered via the batched single-refit-BLAS path.
       *
-      * \param systemKey       Stable per-material/effect key (e.g. captured material hash).
-      * \param desc            Descriptor; drives the size/colour LUT + billboard mode.
-      * \param materialData / legacyMaterialData / categories  As for a normal system.
-      * \param particleRecords Pointer to `particleCount` GpuParticle-layout records.
-      * \param particleCount   Number of live particles supplied this frame.
+      * \param ctx                Command list (used for lazy buffer allocation).
+      * \param drawCallState      The source particle draw (geometry + material hash).
+      * \param renderMaterialData The resolved material to render the particles with.
       */
-    void feedExternalParticles(DxvkContext* ctx, XXH64_hash_t systemKey, const RtxParticleSystemDesc& desc, const MaterialData& materialData, const LegacyMaterialData& legacyMaterialData, const CategoryFlags& categories, const void* particleRecords, uint32_t particleCount);
+    void feedExternalParticleDraw(DxvkContext* ctx, const DrawCallState& drawCallState, const MaterialData& renderMaterialData);
+
+    /**
+      * True if a draw is a reconstructible legacy billboard particle: fixed-function
+      * (no normal), vertex colour + single texcoord present, 24-byte interleaved
+      * vertex, 4-verts-per-quad topology, not skinned, and not already an RTX
+      * particle emitter / replacement. Used to route draws to feedExternalParticleDraw().
+      */
+    static bool isReconstructibleBillboardParticle(const DrawCallState& drawCallState);
   };
 }

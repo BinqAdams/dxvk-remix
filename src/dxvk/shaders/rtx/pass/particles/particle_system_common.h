@@ -205,7 +205,11 @@ struct GpuParticleSystem {
   uint simulateParticleCount = 0;
   uint particleHeadOffset = 0;
   uint particleCount = 0;
-  uint pad = 0;
+  // Repurposed from padding: 1 for a reconstructed legacy-particle system, where
+  // generate_geometry takes per-particle size from pad0/pad1 and colour from
+  // enBaseColor directly, bypassing the descriptor's life-curve LUT. 0 (default)
+  // keeps the native GPU-simulated path byte-identical.
+  uint externallyFed = 0;
 
 #ifndef __cplusplus
   float16_t varyTimeToLive(float rand) {

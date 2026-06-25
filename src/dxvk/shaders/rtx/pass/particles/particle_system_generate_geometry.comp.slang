@@ -138,8 +138,21 @@ void main(uint2 threadIdx : SV_DispatchThreadID)
   const GpuParticle particle = Particles[particleIdx];
   
   // precache some values
-  const float2 size = particle.size(particleSystem, animationDataTex) * particleCb.sceneScale;
-  const float4 color = particle.color(particleSystem, animationDataTex);
+  // Externally-fed (reconstructed legacy) particles carry their final per-particle
+  // size + colour directly (the source quads already encoded them), so bypass the
+  // descriptor's life-curve LUT: size from the spare pad halves, colour from enBaseColor.
+  float2 size;
+  float4 color;
+  if (particleSystem.externallyFed != 0)
+  {
+    size = float2(float(particle.pad0), float(particle.pad1));
+    color = unorm4x8ToFloat4x32(particle.enBaseColor);
+  }
+  else
+  {
+    size = particle.size(particleSystem, animationDataTex) * particleCb.sceneScale;
+    color = particle.color(particleSystem, animationDataTex);
+  }
   
   if(particle.isDead() || particle.isSleeping() || color.w < particleCb.resolveTransparencyThreshold || max(size.x, size.y) < 0.1f)
   {

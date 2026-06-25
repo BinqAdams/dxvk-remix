@@ -30,10 +30,13 @@
 #include "rtx_imgui.h"
 
 #include "../util/util_global_time.h"
+#include "../util/util_once.h"
 
 #include <rtx_shaders/particle_system_spawn.h>
 #include <rtx_shaders/particle_system_evolve.h>
 #include <rtx_shaders/particle_system_generate_geometry.h>
+#include <rtx_shaders/particle_system_reconstruct.h>
+#include "rtx/pass/particles/particle_system_reconstruct_binding_indices.h"
 #include "math.h"
 
 namespace dxvk {
@@ -93,6 +96,23 @@ namespace dxvk {
 
         RW_STRUCTURED_BUFFER(PARTICLE_SYSTEM_BINDING_VERTEX_BUFFER_OUTPUT)
         END_PARAMETER()
+    };
+
+    // Reconstructs GpuParticle records from a legacy billboard-particle draw's
+    // geometry (see feedExternalParticleDraw / particle_system_reconstruct.comp).
+    // High binding slots (70+) avoid clobbering the COMMON_RAYTRACING_BINDINGS /
+    // particle bindings on the shared simulate context.
+    class ParticleSystemReconstruct : public ManagedShader {
+      SHADER_SOURCE(ParticleSystemReconstruct, VK_SHADER_STAGE_COMPUTE_BIT, particle_system_reconstruct)
+
+      PUSH_CONSTANTS(ReconstructParticleArgs)
+
+      BEGIN_PARAMETER()
+        STRUCTURED_BUFFER(RECONSTRUCT_PARTICLES_BINDING_POSITION_INPUT)
+        STRUCTURED_BUFFER(RECONSTRUCT_PARTICLES_BINDING_TEXCOORD_INPUT)
+        STRUCTURED_BUFFER(RECONSTRUCT_PARTICLES_BINDING_COLOR_INPUT)
+        RW_STRUCTURED_BUFFER(RECONSTRUCT_PARTICLES_BINDING_PARTICLES_OUTPUT)
+      END_PARAMETER()
     };
   }
 
@@ -578,22 +598,113 @@ namespace dxvk {
     m_spawnContexts.emplace_back(std::move(spawnCtx));
   }
 
-  void RtxParticleSystemManager::feedExternalParticles(DxvkContext* ctx, XXH64_hash_t systemKey, const RtxParticleSystemDesc& desc, const MaterialData& materialData, const LegacyMaterialData& legacyMaterialData, const CategoryFlags& categories, const void* particleRecords, uint32_t particleCount) {
+  const RtxParticleSystemDesc& RtxParticleSystemManager::getReconstructedDesc() {
+    const uint32_t cap = std::max(1u, reconstructLegacyParticlesMaxPerMaterial());
+    if (!m_reconstructedDescValid || m_reconstructedDesc.maxNumParticles != cap) {
+      // Start from the global preset, then force the externally-fed configuration:
+      // no spawning/evolution, camera-facing billboards, a single sprite frame, and
+      // neutral life-curve LUTs (size + colour are supplied per particle and the LUT
+      // is bypassed by generate_geometry, but the animation texture is still built).
+      RtxParticleSystemDesc desc = createGlobalParticleSystemDesc();
+      desc.maxNumParticles = cap;
+      desc.minTimeToLive = 1.0f;
+      desc.maxTimeToLive = 1.0f;
+      desc.spawnRatePerSecond = 0.0f;
+      desc.spawnBurstDuration = 0.0f;
+      desc.gravityForce = 0.0f;
+      desc.useTurbulence = 0;
+      desc.enableCollisionDetection = 0;
+      desc.enableMotionTrail = 0;
+      desc.alignParticlesToVelocity = 0;
+      desc.hideEmitter = 0;
+      desc.billboardType = ParticleBillboardType::FaceCamera_Spherical;
+      desc.spriteSheetMode = ParticleSpriteSheetMode::UseMaterialSpriteSheet;
+      desc.spriteSheetRows = 1;
+      desc.spriteSheetCols = 1;
+      desc.randomFlipAxis = ParticleRandomFlipAxis::None;
+      desc.minColor = { vec4(1.0f), vec4(1.0f) };
+      desc.maxColor = { vec4(1.0f), vec4(1.0f) };
+      desc.minSize = { vec2(1.0f, 1.0f), vec2(1.0f, 1.0f) };
+      desc.maxSize = { vec2(1.0f, 1.0f), vec2(1.0f, 1.0f) };
+      m_reconstructedDesc = std::move(desc);
+      m_reconstructedDescHash = m_reconstructedDesc.calcHash();
+      m_reconstructedDescValid = true;
+    }
+    return m_reconstructedDesc;
+  }
+
+  bool RtxParticleSystemManager::isReconstructibleBillboardParticle(const DrawCallState& drawCallState) {
+    const RasterGeometry& geo = drawCallState.getGeometryData();
+
+    // Fixed-function billboard signature (verified from the PK capture, FVF
+    // XYZ|DIFFUSE|TEX1): no normals, vertex colour + a single texcoord present,
+    // float3 position in a 24-byte interleaved vertex, and not skinned.
+    if (geo.normalBuffer.defined()) {
+      return false;
+    }
+    if (!geo.color0Buffer.defined() || !geo.texcoordBuffer.defined()) {
+      return false;
+    }
+    if (geo.positionBuffer.vertexFormat() != VK_FORMAT_R32G32B32_SFLOAT) {
+      return false;
+    }
+    // 24 = pos(12) + D3DCOLOR(4) + uv(8). Excludes 2-texcoord (0x242, stride 32) etc.
+    if (geo.positionBuffer.stride() != 24) {
+      return false;
+    }
+    if (geo.numBonesPerVertex != 0) {
+      return false;
+    }
+    // Leave RTX particle emitters / replacements to the normal emitter path.
+    if (drawCallState.categories.test(InstanceCategories::ParticleEmitter)) {
+      return false;
+    }
+
+    // 4-verts-per-quad topology only: a single-quad triangle strip, or an indexed
+    // quad-list whose vertex buffer is dense 4-verts-per-quad (6 indices per quad).
+    // 6-vertex trilist quads and vertex-shared beams fall through to the normal path.
+    if (geo.vertexCount == 0 || (geo.vertexCount % 4u) != 0u) {
+      return false;
+    }
+    if (geo.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP) {
+      return geo.vertexCount == 4u;
+    }
+    if (geo.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST && geo.usesIndices()) {
+      return uint64_t(geo.indexCount) * 4ull == uint64_t(geo.vertexCount) * 6ull;
+    }
+    return false;
+  }
+
+  void RtxParticleSystemManager::feedExternalParticleDraw(DxvkContext* ctx, const DrawCallState& drawCallState, const MaterialData& renderMaterialData) {
     ScopedCpuProfileZone();
-    if (!enable() || desc.maxNumParticles == 0 || particleCount == 0 || particleRecords == nullptr) {
+    if (!enable()) {
+      return;
+    }
+
+    const RasterGeometry& geo = drawCallState.getGeometryData();
+    const uint32_t numQuads = geo.vertexCount / 4u;
+    if (numQuads == 0) {
+      return;
+    }
+
+    const RtxParticleSystemDesc& desc = getReconstructedDesc();
+    if (desc.maxNumParticles == 0) {
       return;
     }
 
     m_initialized = true;
 
-    // Key the system by the caller-provided stable key (e.g. a captured material
-    // hash for one PK effect) folded with the descriptor, mirroring the keying
-    // scheme used by fetchParticleSystem().
-    const XXH64_hash_t key = systemKey ^ desc.calcHash();
+    // One system per source material (stage-0 texture hash), folded with the
+    // reconstructed descriptor's hash (mirrors fetchParticleSystem's keying).
+    const XXH64_hash_t key = drawCallState.getMaterialData().getHash() ^ m_reconstructedDescHash;
 
     auto it = m_particleSystems.find(key);
     if (it == m_particleSystems.end()) {
-      auto pNew = std::make_shared<ParticleSystem>(desc, materialData, legacyMaterialData, categories, m_particleSystemCounter++);
+      // Strip any nested particle definition on the material to avoid recursion.
+      MaterialData particleRenderMaterial(renderMaterialData);
+      particleRenderMaterial.m_particleSystem = std::nullopt;
+
+      auto pNew = std::make_shared<ParticleSystem>(desc, particleRenderMaterial, drawCallState.getMaterialData(), drawCallState.getCategoryFlags(), m_particleSystemCounter++);
       pNew->externallyFed = true;
       pNew->allocStaticBuffers(ctx);
       it = m_particleSystems.insert({ key, pNew }).first;
@@ -601,16 +712,32 @@ namespace dxvk {
 
     ParticleSystem* system = it->second.get();
     system->externallyFed = true;
+    system->lastSpawnTimeMs = GlobalTime::get().absoluteTimeMs(); // keep alive past GC
 
-    // Stage the host-provided particle state. simulate() uploads it to the
-    // particle buffer and runs ONLY geometry generation (no GPU spawn/evolve)
-    // this frame, so the game's already-simulated particles render through the
-    // same pooled-buffer -> single-BLAS path.
-    const uint32_t clampedCount = std::min(particleCount, system->context.desc.maxNumParticles);
-    const size_t bytes = size_t(clampedCount) * sizeof(GpuParticle);
-    system->fedParticleStaging.resize(bytes);
-    memcpy(system->fedParticleStaging.data(), particleRecords, bytes);
-    system->fedParticleCount = clampedCount;
+    // First draw of this frame for this system: reset the accumulation.
+    const uint32_t frameId = ctx->getDevice()->getCurrentFrameId();
+    if (system->fedFrameId != frameId) {
+      system->fedFrameId = frameId;
+      system->fedDraws.clear();
+      system->fedParticleCount = 0;
+    }
+
+    const uint32_t cap = system->context.desc.maxNumParticles;
+    if (system->fedParticleCount >= cap) {
+      ONCE(Logger::warn("[RTX Particles] reconstructLegacyParticles: per-material capacity reached; dropping particles. Raise rtx.particles.reconstructLegacyParticlesMaxPerMaterial."));
+      return;
+    }
+    const uint32_t take = std::min(numQuads, cap - system->fedParticleCount);
+
+    FedDraw fd;
+    fd.positionBuffer = geo.positionBuffer;
+    fd.color0Buffer = geo.color0Buffer;
+    fd.texcoordBuffer = geo.texcoordBuffer;
+    fd.numQuads = take;
+    fd.baseParticleIndex = system->fedParticleCount;
+    system->fedDraws.push_back(std::move(fd));
+
+    system->fedParticleCount += take;
     system->fedThisFrame = true;
   }
 
@@ -653,9 +780,11 @@ namespace dxvk {
         const bool isNumParticlesConstant = externallyFed || (particleSystem.desc.spawnRatePerSecond >= particleSystem.desc.maxNumParticles);
 
         if (externallyFed) {
-          // Host/proxy supplies the particle state; no GPU spawn/evolve. Render
-          // exactly the particles fed this frame (0 if none were fed), densely
-          // packed from slot 0.
+          // Tells generate_geometry to take per-particle size/colour directly.
+          particleSystem.externallyFed = 1u;
+          // The game supplies the particle state (reconstructed below); no GPU
+          // spawn/evolve. Render exactly the particles fed this frame (0 if none
+          // were fed), densely packed from slot 0.
           const uint32_t fed = system.second->fedThisFrame
             ? std::min(system.second->fedParticleCount, particleSystem.desc.maxNumParticles) : 0u;
           particleSystem.particleCount = fed;
@@ -714,14 +843,53 @@ namespace dxvk {
 
         ctx->setBarrierControl(barrierControl);
 
-        // Externally-fed: upload the host-provided particle state into the
-        // particle buffer before geometry generation. Spawn/evolve dispatches
-        // below are skipped because spawn/simulate counts are 0.
+        // Externally-fed: reconstruct each accumulated legacy billboard draw into
+        // the particle state buffer (one GpuParticle per source quad) GPU-side,
+        // before geometry generation. Spawn/evolve dispatches below are skipped
+        // because spawn/simulate counts are 0.
         if (externallyFed) {
-          const size_t bytes = size_t(particleSystem.particleCount) * sizeof(GpuParticle);
-          if (bytes > 0 && system.second->fedParticleStaging.size() >= bytes) {
-            ctx->writeToBuffer(system.second->getParticlesBuffer(), 0, bytes, system.second->fedParticleStaging.data());
+          // Each draw writes a unique output slot range, so ignore write-after-write
+          // hazards within the loop; default barriers are restored before the
+          // geometry pass reads the buffer.
+          DxvkBarrierControlFlags reconstructBarrier;
+          reconstructBarrier.set(DxvkBarrierControl::IgnoreWriteAfterWrite);
+          ctx->setBarrierControl(reconstructBarrier);
+          ctx->setPushConstantBank(DxvkPushConstantBank::RTX);
+
+          for (const FedDraw& fd : system.second->fedDraws) {
+            if (fd.numQuads == 0) {
+              continue;
+            }
+
+            ReconstructParticleArgs args = {};
+            args.positionOffset = fd.positionBuffer.offsetFromSlice() / 4u;
+            args.positionStride = fd.positionBuffer.stride() / 4u;
+            args.texcoordOffset = fd.texcoordBuffer.offsetFromSlice() / 4u;
+            args.texcoordStride = fd.texcoordBuffer.stride() / 4u;
+            args.hasColor = fd.color0Buffer.defined() ? 1u : 0u;
+            if (args.hasColor) {
+              args.colorOffset = fd.color0Buffer.offsetFromSlice() / 4u;
+              args.colorStride = fd.color0Buffer.stride() / 4u;
+            }
+            args.numQuads = fd.numQuads;
+            args.baseParticleIndex = fd.baseParticleIndex;
+
+            ctx->bindResourceBuffer(RECONSTRUCT_PARTICLES_BINDING_POSITION_INPUT, fd.positionBuffer);
+            ctx->bindResourceBuffer(RECONSTRUCT_PARTICLES_BINDING_TEXCOORD_INPUT, fd.texcoordBuffer);
+            // Always bind the colour slot (fall back to the position buffer when the
+            // draw had no vertex colour; the shader guards the read with hasColor).
+            ctx->bindResourceBuffer(RECONSTRUCT_PARTICLES_BINDING_COLOR_INPUT, args.hasColor ? fd.color0Buffer : fd.positionBuffer);
+            ctx->bindResourceBuffer(RECONSTRUCT_PARTICLES_BINDING_PARTICLES_OUTPUT, DxvkBufferSlice(system.second->getParticlesBuffer()));
+
+            ctx->pushConstants(0, sizeof(ReconstructParticleArgs), &args);
+            ctx->bindShader(VK_SHADER_STAGE_COMPUTE_BIT, ParticleSystemReconstruct::getShader());
+
+            const VkExtent3D reconWg = util::computeBlockCount(VkExtent3D { fd.numQuads, 1, 1 }, VkExtent3D { 128, 1, 1 });
+            ctx->dispatch(reconWg.width, reconWg.height, reconWg.depth);
           }
+
+          // Restore default barriers so the geometry pass sees the reconstructed data.
+          ctx->setBarrierControl(DxvkBarrierControlFlags());
           system.second->fedThisFrame = false; // consumed this frame
         }
 
@@ -754,6 +922,10 @@ namespace dxvk {
         {
           const VkExtent3D workgroups = util::computeBlockCount(VkExtent3D { particleSystem.particleCount, 1, 1 }, VkExtent3D { 128, 1, 1 });
 
+          // Bind the spawn-contexts buffer too: generate_geometry's parameter list
+          // declares it, and the spawn pass that normally binds it is skipped for
+          // externally-fed systems (spawnParticleCount == 0).
+          ctx->bindResourceBuffer(PARTICLE_SYSTEM_BINDING_SPAWN_CONTEXTS_INPUT, DxvkBufferSlice(m_spawnContextsBuffer));
           ctx->bindResourceBuffer(PARTICLE_SYSTEM_BINDING_PARTICLES_BUFFER_INPUT, DxvkBufferSlice(system.second->getParticlesBuffer()));
           ctx->bindResourceBuffer(PARTICLE_SYSTEM_BINDING_VERTEX_BUFFER_OUTPUT, DxvkBufferSlice(system.second->getVertexBuffer()));
 
@@ -1161,6 +1333,13 @@ namespace dxvk {
       }
 
       ++particleSystem.generationIdx;
+
+      // Externally-fed systems re-accumulate their source draws each frame; release
+      // the consumed draw list (and its source-buffer references) now.
+      if (particleSystem.externallyFed) {
+        particleSystem.fedDraws.clear();
+        particleSystem.fedThisFrame = false;
+      }
 
       particleSystem.context.spawnParticleOffset = particleSystem.context.particleHeadOffset;
       particleSystem.context.spawnParticleCount = 0;
