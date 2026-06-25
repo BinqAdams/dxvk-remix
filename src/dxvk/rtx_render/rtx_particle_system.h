@@ -110,6 +110,17 @@ namespace dxvk {
 
       uint32_t generationIdx = 0;
 
+      // --- Externally-fed (CPU-simulated) path -----------------------------
+      // When set, this system's particle STATE is supplied by the host/proxy
+      // each frame (the game already simulated it) instead of the GPU
+      // spawn/evolve passes. simulate() then runs ONLY generate_geometry over
+      // the uploaded particles, reusing the same pooled-buffer -> single-BLAS
+      // handoff. fedParticleStaging holds raw GpuParticle records (48B each).
+      bool externallyFed = false;
+      bool fedThisFrame = false;
+      uint32_t fedParticleCount = 0;
+      std::vector<uint8_t> fedParticleStaging;
+
       ParticleSystem() = delete;
       ParticleSystem(const RtxParticleSystemDesc& desc, const MaterialData& matData, const LegacyMaterialData& legacyMatData, const CategoryFlags& cats, const uint32_t seed);
 
@@ -291,5 +302,20 @@ namespace dxvk {
       * \param ctx           The RtxContext for issuing GPU commands.
       */
     void simulate(RtxContext* ctx);
+
+    /**
+      * Feed externally-simulated particle state (host/proxy-provided) for one
+      * material this frame, bypassing the GPU spawn/evolve passes. The records
+      * must match the GpuParticle GPU layout (48B each). simulate() uploads them
+      * and runs only geometry generation + the normal single-BLAS handoff, so
+      * the game's already-simulated particles render via the fast batched path.
+      *
+      * \param systemKey       Stable per-material/effect key (e.g. captured material hash).
+      * \param desc            Descriptor; drives the size/colour LUT + billboard mode.
+      * \param materialData / legacyMaterialData / categories  As for a normal system.
+      * \param particleRecords Pointer to `particleCount` GpuParticle-layout records.
+      * \param particleCount   Number of live particles supplied this frame.
+      */
+    void feedExternalParticles(DxvkContext* ctx, XXH64_hash_t systemKey, const RtxParticleSystemDesc& desc, const MaterialData& materialData, const LegacyMaterialData& legacyMaterialData, const CategoryFlags& categories, const void* particleRecords, uint32_t particleCount);
   };
 }

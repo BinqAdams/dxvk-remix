@@ -578,6 +578,42 @@ namespace dxvk {
     m_spawnContexts.emplace_back(std::move(spawnCtx));
   }
 
+  void RtxParticleSystemManager::feedExternalParticles(DxvkContext* ctx, XXH64_hash_t systemKey, const RtxParticleSystemDesc& desc, const MaterialData& materialData, const LegacyMaterialData& legacyMaterialData, const CategoryFlags& categories, const void* particleRecords, uint32_t particleCount) {
+    ScopedCpuProfileZone();
+    if (!enable() || desc.maxNumParticles == 0 || particleCount == 0 || particleRecords == nullptr) {
+      return;
+    }
+
+    m_initialized = true;
+
+    // Key the system by the caller-provided stable key (e.g. a captured material
+    // hash for one PK effect) folded with the descriptor, mirroring the keying
+    // scheme used by fetchParticleSystem().
+    const XXH64_hash_t key = systemKey ^ desc.calcHash();
+
+    auto it = m_particleSystems.find(key);
+    if (it == m_particleSystems.end()) {
+      auto pNew = std::make_shared<ParticleSystem>(desc, materialData, legacyMaterialData, categories, m_particleSystemCounter++);
+      pNew->externallyFed = true;
+      pNew->allocStaticBuffers(ctx);
+      it = m_particleSystems.insert({ key, pNew }).first;
+    }
+
+    ParticleSystem* system = it->second.get();
+    system->externallyFed = true;
+
+    // Stage the host-provided particle state. simulate() uploads it to the
+    // particle buffer and runs ONLY geometry generation (no GPU spawn/evolve)
+    // this frame, so the game's already-simulated particles render through the
+    // same pooled-buffer -> single-BLAS path.
+    const uint32_t clampedCount = std::min(particleCount, system->context.desc.maxNumParticles);
+    const size_t bytes = size_t(clampedCount) * sizeof(GpuParticle);
+    system->fedParticleStaging.resize(bytes);
+    memcpy(system->fedParticleStaging.data(), particleRecords, bytes);
+    system->fedParticleCount = clampedCount;
+    system->fedThisFrame = true;
+  }
+
   void RtxParticleSystemManager::simulate(RtxContext* ctx) {
     if (!enable() || !m_initialized) {
       m_spawnContexts.clear();
@@ -612,9 +648,23 @@ namespace dxvk {
 
         GpuParticleSystem& particleSystem = system.second->context;
 
-        const bool isNumParticlesConstant = particleSystem.desc.spawnRatePerSecond >= particleSystem.desc.maxNumParticles;
+        const bool externallyFed = system.second->externallyFed;
+        // Externally-fed and "constant" systems both bypass the conservative GPU counter.
+        const bool isNumParticlesConstant = externallyFed || (particleSystem.desc.spawnRatePerSecond >= particleSystem.desc.maxNumParticles);
 
-        if (isNumParticlesConstant) {
+        if (externallyFed) {
+          // Host/proxy supplies the particle state; no GPU spawn/evolve. Render
+          // exactly the particles fed this frame (0 if none were fed), densely
+          // packed from slot 0.
+          const uint32_t fed = system.second->fedThisFrame
+            ? std::min(system.second->fedParticleCount, particleSystem.desc.maxNumParticles) : 0u;
+          particleSystem.particleCount = fed;
+          particleSystem.spawnParticleCount = 0;
+          particleSystem.simulateParticleCount = 0;
+          particleSystem.particleHeadOffset = fed;
+          particleSystem.particleTailOffset = 0;
+          particleSystem.spawnParticleOffset = 0;
+        } else if (isNumParticlesConstant) {
           particleSystem.simulateParticleCount = particleSystem.desc.maxNumParticles;
           particleSystem.particleCount = particleSystem.desc.maxNumParticles;
           particleSystem.spawnParticleCount = particleSystem.desc.maxNumParticles;
@@ -663,6 +713,17 @@ namespace dxvk {
         }
 
         ctx->setBarrierControl(barrierControl);
+
+        // Externally-fed: upload the host-provided particle state into the
+        // particle buffer before geometry generation. Spawn/evolve dispatches
+        // below are skipped because spawn/simulate counts are 0.
+        if (externallyFed) {
+          const size_t bytes = size_t(particleSystem.particleCount) * sizeof(GpuParticle);
+          if (bytes > 0 && system.second->fedParticleStaging.size() >= bytes) {
+            ctx->writeToBuffer(system.second->getParticlesBuffer(), 0, bytes, system.second->fedParticleStaging.data());
+          }
+          system.second->fedThisFrame = false; // consumed this frame
+        }
 
         // Handle spawning
         if (particleSystem.spawnParticleCount > 0) {
