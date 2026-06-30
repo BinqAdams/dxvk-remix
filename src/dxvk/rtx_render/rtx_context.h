@@ -111,7 +111,7 @@ namespace dxvk {
     void clearImageView(const Rc<DxvkImageView>& imageView, VkOffset3D offset, VkExtent3D extent, VkImageAspectFlags aspect, VkClearValue value);
 
     void commitGeometryToRT(const DrawParameters& params, DrawCallState& drawCallState);
-    void commitExternalGeometryToRT(ExternalDrawState&& state);
+    void commitExternalGeometryToRT(std::unique_ptr<ExternalDrawState> state);
 
     // Returns the replacement albedo image view registered for `textureHash`
     // (demand-loading it), or nullptr if there is no opaque replacement or it
