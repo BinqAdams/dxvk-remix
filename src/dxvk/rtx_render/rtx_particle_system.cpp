@@ -31,6 +31,7 @@
 
 #include "../util/util_global_time.h"
 #include "../util/util_once.h"
+#include "../util/util_string.h"
 
 #include <rtx_shaders/particle_system_spawn.h>
 #include <rtx_shaders/particle_system_evolve.h>
@@ -208,6 +209,10 @@ namespace dxvk {
       RemixGui::Checkbox("Enable Spawning", &enableSpawningObject());
       RemixGui::DragFloat("Time Scale", &timeScaleObject(), 0.01f, 0.f, 1.f, "%.2f");
 
+      RemixGui::Separator();
+      RemixGui::Checkbox("Reconstruct Legacy FFP Particles (experimental)", &reconstructLegacyParticlesObject());
+      RemixGui::Separator();
+
       if (RemixGui::CollapsingHeader("Global Preset", ImGuiTreeNodeFlags_CollapsingHeader)) {
         ImGui::Indent();
         ImGui::TextWrapped("The following settings will be applied to all particle systems created using the texture tagging mechanism.  Particle systems created via USD assets are not affected by these.");
@@ -374,7 +379,7 @@ namespace dxvk {
     constants.absoluteTimeSecs = GlobalTime::get().absoluteTimeMs() * 0.001f * timeScale();
 
     constants.resolveTransparencyThreshold = RtxOptions::resolveTransparencyThreshold();
-    constants.minParticleSize = 2.f; // NOTE: In pixels
+    constants.minParticleSize = minParticleSize(); // NOTE: In pixels; rtx.particles.minParticleSize (0 disables the screen-space size cull)
     constants.sceneScale = RtxOptions::sceneScale();
   }
 
@@ -655,8 +660,14 @@ namespace dxvk {
     if (geo.numBonesPerVertex != 0) {
       return false;
     }
-    // Leave RTX particle emitters / replacements to the normal emitter path.
-    if (drawCallState.categories.test(InstanceCategories::ParticleEmitter)) {
+    // Leave RTX particle systems alone. Emitters take the emitter path; and — critically —
+    // the particle system's OWN generated geometry (submitDrawState tags it
+    // InstanceCategories::Particle) is itself a no-normal, 24-byte (ParticleVertex =
+    // vec3 pos + uint color + vec2 uv), indexed-quad billboard. Without excluding it, the
+    // reconstructed output re-matches here and gets fed back + dropped every frame in an
+    // infinite reconstruct->drop loop, so the particles never render.
+    if (drawCallState.getCategoryFlags().test(InstanceCategories::ParticleEmitter) ||
+        drawCallState.getCategoryFlags().test(InstanceCategories::Particle)) {
       return false;
     }
 
@@ -770,6 +781,25 @@ namespace dxvk {
                                                                                                rtOutput.getPreviousPrimaryWorldPositionWorldTriangleNormal().matchesWriteFrameIdx(constants.frameIdx - 1)), nullptr);
       const uint32_t frameIdx = ctx->getDevice()->getCurrentFrameId();
 
+      // [ReconDbg] Log the reconstructed particle[0] copied back last frame.
+      if (m_debugReadback != nullptr && (frameIdx % 64u) == 1u) {
+        const uint8_t* dp = reinterpret_cast<const uint8_t*>(m_debugReadback->mapPtr(0));
+        if (dp != nullptr) {
+          float p[3]; uint32_t col = 0; uint16_t ttlR = 0, s0R = 0, s1R = 0;
+          memcpy(p, dp + 0, sizeof(p));
+          memcpy(&col, dp + 12, 4);
+          memcpy(&ttlR, dp + 42, 2);
+          memcpy(&s0R, dp + 44, 2);
+          memcpy(&s1R, dp + 46, 2);
+          Logger::info(str::format("[ReconDbg] p0 pos=(", p[0], ",", p[1], ",", p[2],
+            ") size=(", glm::unpackHalf1x16(s0R), ",", glm::unpackHalf1x16(s1R),
+            ") ttl=", glm::unpackHalf1x16(ttlR), " ttlRaw=", (uint32_t)ttlR,
+            " colorU=", col, " deadSentinel=", (ttlR == 0x7C00u) ? 1 : 0));
+        }
+      }
+
+      bool didReconDbgCopy = false;
+
       for (auto& system : m_particleSystems) {
         auto& conservativeCount = system.second->getCounter();
 
@@ -788,11 +818,37 @@ namespace dxvk {
           const uint32_t fed = system.second->fedThisFrame
             ? std::min(system.second->fedParticleCount, particleSystem.desc.maxNumParticles) : 0u;
           particleSystem.particleCount = fed;
+          // Grow a 256-aligned high-watermark and draw that many quads every frame (real +
+          // degenerate tail) so the BLAS topology stays constant -> valid refit + stable
+          // identity (no flicker). The per-frame count swing (e.g. 231..563) would otherwise
+          // change the prim count every frame and invalidate the refit.
+          system.second->drawWatermark = std::min(particleSystem.desc.maxNumParticles,
+            std::max(system.second->drawWatermark, (fed + 255u) & ~255u));
           particleSystem.spawnParticleCount = 0;
           particleSystem.simulateParticleCount = 0;
           particleSystem.particleHeadOffset = fed;
           particleSystem.particleTailOffset = 0;
           particleSystem.spawnParticleOffset = 0;
+
+          // [ReconDbg] Throttled diagnostics for the legacy-particle reconstruction
+          // path: counts (front half) + the first source draw's geometry params so we
+          // can tell if the reconstruct is reading sane stride/offset/format.
+          if ((frameIdx % 64u) == 0u) {
+            const FedDraw* fd0 = system.second->fedDraws.empty() ? nullptr : &system.second->fedDraws[0];
+            Logger::info(str::format(
+              "[ReconDbg] fedDraws=", system.second->fedDraws.size(),
+              " fedCount=", system.second->fedParticleCount,
+              " particleCount=", particleSystem.particleCount,
+              " texHash=", (uint64_t)system.second->legacyMaterialData.getHash(),
+              " fedThisFrame=", system.second->fedThisFrame ? 1 : 0,
+              " | fd0 numQuads=", fd0 ? fd0->numQuads : 0u,
+              " posStride=", fd0 ? fd0->positionBuffer.stride() : 0u,
+              " posOff=", fd0 ? fd0->positionBuffer.offsetFromSlice() : 0u,
+              " posFmt=", fd0 ? (uint32_t)fd0->positionBuffer.vertexFormat() : 0u,
+              " uvStride=", fd0 ? fd0->texcoordBuffer.stride() : 0u,
+              " uvOff=", fd0 ? fd0->texcoordBuffer.offsetFromSlice() : 0u,
+              " hasColor=", (fd0 && fd0->color0Buffer.defined()) ? 1 : 0));
+          }
         } else if (isNumParticlesConstant) {
           particleSystem.simulateParticleCount = particleSystem.desc.maxNumParticles;
           particleSystem.particleCount = particleSystem.desc.maxNumParticles;
@@ -900,6 +956,13 @@ namespace dxvk {
 
           // Restore default barriers so the geometry pass sees the reconstructed data.
           ctx->setBarrierControl(DxvkBarrierControlFlags());
+
+          // [ReconDbg] Copy particle[0] of the first fed system for next-frame readback.
+          if (!didReconDbgCopy && m_debugReadback != nullptr) {
+            ctx->copyBuffer(m_debugReadback, 0, system.second->getParticlesBuffer(), 0, sizeof(GpuParticle));
+            didReconDbgCopy = true;
+          }
+
           system.second->fedThisFrame = false; // consumed this frame
         }
 
@@ -1044,8 +1107,12 @@ namespace dxvk {
       // Here we create a fake draw call, and send it through the regular scene manager pipeline
       //   which has the advantage of supporting replacement materials.
 
-      // This is a conservative estimate, so we must clamp particles to the known maximum
-      const uint32_t numParticles = std::min(particleSystem.context.particleCount + particleSystem.context.spawnParticleCount, particleSystem.context.desc.maxNumParticles);
+      // Externally-fed systems draw a STABLE high-watermark count (constant BLAS topology)
+      // so the per-frame refit stays valid across the live-count swing; the surplus beyond
+      // the live count is degenerate (tail-cleared in simulate). Native uses the live estimate.
+      const uint32_t numParticles = particleSystem.externallyFed
+        ? std::min(particleSystem.drawWatermark, particleSystem.context.desc.maxNumParticles)
+        : std::min(particleSystem.context.particleCount + particleSystem.context.spawnParticleCount, particleSystem.context.desc.maxNumParticles);
       if (numParticles == 0) {
         continue;
       }
@@ -1066,8 +1133,20 @@ namespace dxvk {
       particleGeometry.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
       particleGeometry.cullMode = VK_CULL_MODE_NONE;
       particleGeometry.frontFace = VK_FRONT_FACE_CLOCKWISE;
-      particleGeometry.hashes[HashComponents::Indices] = particleHashConstant ^ particleSystem.getGeneration();
-      particleGeometry.hashes[HashComponents::VertexPosition] = particleHashConstant ^ particleSystem.getGeneration();
+      if (particleSystem.externallyFed) {
+        // Reconstructed legacy particles: the Indices hash is particleHashConstant WITHOUT
+        // the per-frame generation. Because numParticles is the stable draw-watermark above,
+        // particleHashConstant is constant frame-to-frame, so the DrawCallCache bucket +
+        // DrawCallTracker identity persist -> the RtInstance is reused (not recreated/teleported)
+        // -> temporal accumulation retained -> no flicker. It changes only when the watermark
+        // GROWS (rare), forcing a rebuild for the new topology. The VertexPosition hash stays
+        // content-driven (per generation) so the moving VB still triggers a kUpdateBVH refit.
+        particleGeometry.hashes[HashComponents::Indices] = particleHashConstant;
+        particleGeometry.hashes[HashComponents::VertexPosition] = particleHashConstant ^ particleSystem.getGeneration();
+      } else {
+        particleGeometry.hashes[HashComponents::Indices] = particleHashConstant ^ particleSystem.getGeneration();
+        particleGeometry.hashes[HashComponents::VertexPosition] = particleHashConstant ^ particleSystem.getGeneration();
+      }
       particleGeometry.hashes.precombine();
 
       const RtCamera& camera = ctx->getSceneManager().getCamera();
@@ -1323,6 +1402,17 @@ namespace dxvk {
       info.access = VK_ACCESS_TRANSFER_WRITE_BIT
         | VK_ACCESS_TRANSFER_READ_BIT;
       m_spawnContextsBuffer = device->createBuffer(info, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, DxvkMemoryStats::Category::RTXBuffer, "RTX Particles - Spawn Context Buffer");
+    }
+
+    // [ReconDbg] Host-visible readback for one reconstructed particle.
+    if (m_debugReadback == nullptr) {
+      DxvkBufferCreateInfo info;
+      info.size = sizeof(GpuParticle);
+      info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+      info.stages = VK_PIPELINE_STAGE_TRANSFER_BIT;
+      info.access = VK_ACCESS_TRANSFER_WRITE_BIT;
+      m_debugReadback = device->createBuffer(info, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, DxvkMemoryStats::Category::RTXBuffer, "RTX Particles - Debug Readback");
+      memset(m_debugReadback->mapPtr(0), 0, info.size);
     }
   }
 

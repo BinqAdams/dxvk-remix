@@ -132,6 +132,7 @@ namespace dxvk {
       uint32_t fedParticleCount = 0;             // total reconstructed particles this frame
       uint32_t fedFrameId = kInvalidFrameIndex;  // frame whose draws are accumulated
       std::vector<FedDraw> fedDraws;             // source draws to reconstruct in simulate()
+      uint32_t drawWatermark = 0;                // 256-aligned grow-only draw count -> constant BLAS topology (stable refit + identity)
 
       ParticleSystem() = delete;
       ParticleSystem(const RtxParticleSystemDesc& desc, const MaterialData& matData, const LegacyMaterialData& legacyMatData, const CategoryFlags& cats, const uint32_t seed);
@@ -205,9 +206,14 @@ namespace dxvk {
     bool m_reconstructedDescValid = false;
     const RtxParticleSystemDesc& getReconstructedDesc();
 
+    // [ReconDbg] Host-visible buffer: one reconstructed GpuParticle copied back each
+    // frame so diagnostics can inspect the GPU output we can't otherwise see.
+    Rc<DxvkBuffer> m_debugReadback;
+
     RTX_OPTION("rtx.particles", bool, enable, true, "Enables particle simulation and rendering.");
     RTX_OPTION("rtx.particles", bool, enableSpawning, true, "Controls whether or not any particle system can currently spawn new particles.");
     RTX_OPTION("rtx.particles", float, timeScale, 1.f, "Time modifier, can be used to slow/speed up time.");
+    RTX_OPTION("rtx.particles", float, minParticleSize, 2.f, "Minimum on-screen size in pixels below which a particle billboard is culled in the generate-geometry pass. Set to 0 to disable this screen-space size cull (diagnostic).");
     RTX_OPTION("rtx.particles", bool, reconstructLegacyParticles, false, "Reconstruct legacy fixed-function billboard particles (classic game sprite particles) into the RtxParticleSystem fast path. Each particle draw's quads are rebuilt into GpuParticles GPU-side and rendered as one batched refit BLAS per material, instead of merging hundreds of per-draw billboards into a BLAS that is fully rebuilt every frame. The source draws are dropped from the rasterized/BLAS path. Opt-in; tuned for FFP XYZ|DIFFUSE|TEX1 billboard particles.");
     RTX_OPTION("rtx.particles", uint32_t, reconstructLegacyParticlesMaxPerMaterial, 65536, "Capacity (particles per material per frame) of the reconstructed-particle state buffer. Source draws beyond this for a given material are dropped for that frame.");
 

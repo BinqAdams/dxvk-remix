@@ -686,8 +686,27 @@ namespace dxvk {
         if (rep.particleSystem.has_value()) {
           return true;
         }
+        // A particle system authored on the material (USD ParticleSystemAPI on a Material prim)
+        // lives in MaterialData, not rep.particleSystem. processDrawCallState resolves it via
+        // renderMaterialData.getParticleSystemDesc(); mirror that here so a material-driven
+        // emitter is not stranded on the preserve path, which never spawns particles.
+        if (rep.materialData != nullptr && rep.materialData->getParticleSystemDesc() != nullptr) {
+          return true;
+        }
       }
       return false;
+    };
+
+    // A particle system can also be authored on the material (USD ParticleSystemAPI on a Material
+    // prim) with no mesh replacement. It then reaches the draw via determineMaterialData's
+    // material-hash override, which the preserve path bypasses; detect it the same way so a
+    // material-only emitter isn't stranded.
+    auto resolvedMaterialHasParticleSystem = [this, overrideMaterialData, &input]() -> bool {
+      if (overrideMaterialData != nullptr) {
+        return overrideMaterialData->getParticleSystemDesc() != nullptr;
+      }
+      const MaterialData* pMat = m_pReplacer->getReplacementMaterial(input.getMaterialData().getHash());
+      return pMat != nullptr && pMat->getParticleSystemDesc() != nullptr;
     };
 
     // The RI's prims must already be wired up for this exact replacements vector. drawReplacements
@@ -724,7 +743,8 @@ namespace dxvk {
         !anyReplacementHasParticleSystem() &&
         activeReplacementsMatch &&
         !terrainCascadesJustChanged &&
-        cachedTexturesValidForPreserve;
+        cachedTexturesValidForPreserve &&
+        !resolvedMaterialHasParticleSystem();
 
 
     if (usePreservePath) {
