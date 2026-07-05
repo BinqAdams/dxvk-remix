@@ -647,12 +647,14 @@ namespace dxvk {
                "([GeomLife] lines, with asset-rule geometry hashes) to identify which assets "
                "de-materialize and rebuild during camera motion. Very verbose; leave off unless investigating.");
     RTX_OPTION("rtx", uint32_t, materializationBudgetTrianglesPerFrame, 0,
-               "When > 0, caps the triangles of NEW geometry materialized (uploaded + BLAS-built) per frame.\n"
-               "Draws over the budget are skipped for the frame without creating any state; since games "
-               "resubmit visible draws every frame, deferred geometry materializes on following frames — "
-               "trading a brief pop-in at the frustum edge for the frame spike that a burst of newly-visible "
-               "geometry otherwise causes. The first new geometry of a frame is always admitted, so meshes "
-               "larger than the budget still make progress. 0 = unlimited (legacy behavior).");
+               "When > 0, bounds the triangles of NEW geometry materialized (uploaded + BLAS-built) per frame.\n"
+               "New geometry is admitted while the frame's running total is under the budget; the final "
+               "admission may overshoot by one mesh, so a single mesh larger than the budget still loads. "
+               "Over-budget draws are skipped statelessly and retried on following frames: original draws "
+               "via the game's own resubmission, replacement prims via the ReplacementInstance "
+               "pendingMaterialization flag, which bypasses the preserve path until every prim materialized. "
+               "Trades a brief pop-in at the frustum edge for the frame spike a burst of newly-visible "
+               "geometry otherwise causes. 0 = unlimited (legacy behavior).");
     RTX_OPTION("rtx", uint32_t, numFramesToKeepLights, 100, ""); // NOTE: This was the default we've had for a while, can probably be reduced...
     RTX_OPTION("rtx", uint32_t, sceneKeepAliveFrames, 0, 
                "Number of consecutive frames without valid camera or raytracing before clearing the scene."
