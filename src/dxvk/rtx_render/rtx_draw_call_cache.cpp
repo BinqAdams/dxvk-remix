@@ -155,6 +155,12 @@ BlasEntry* DrawCallCache::allocateEntry(XXH64_hash_t hash, const DrawCallState& 
   auto iter = m_entries.emplace(hash, drawCall);
   BlasEntry* result = &iter->second;
   result->frameCreated = m_device->getCurrentFrameId();
+  if (RtxOptions::logGeometryLifecycle()) {
+    Logger::info(str::format("[GeomLife] ", result->frameCreated,
+      " BLASENTRY-NEW hash=0x", std::hex, hash,
+      " assetHash=0x", drawCall.getHash(RtxOptions::geometryAssetHashRule()), std::dec,
+      " tris=", drawCall.getGeometryData().calculatePrimitiveCount()));
+  }
   return result;
 }
 
