@@ -249,6 +249,14 @@ struct ReplacementInstance {
   // match. Used downstream to gate update work and to identify animated
   // entities for anti-culling.
   DirtyFlags dirtyFlags;
+
+  // Pending-work signal (boundingBoxDirty semantics, NOT dirtyFlags semantics —
+  // dirtyFlags is overwritten by computeDirtyFlags every submission): set when
+  // any prim of this RI was skipped by the per-frame materialization budget
+  // (rtx.materializationBudgetTrianglesPerFrame), cleared by the next
+  // drawReplacements pass that defers nothing. While set, the preserve path is
+  // bypassed so deferred prims are retried instead of persisting as holes.
+  bool pendingMaterialization = false;
 };
 
 // Wrapper utility to share the code for handling replacementInstance ownership.
