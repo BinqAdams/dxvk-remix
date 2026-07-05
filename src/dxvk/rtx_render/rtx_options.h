@@ -636,6 +636,10 @@ namespace dxvk {
     RTX_OPTION_ENV("rtx", bool, adaptiveAccumulation, true, "DXVK_USE_ADAPTIVE_ACCUMULATION", "");
     RTX_OPTION("rtx", uint32_t, numFramesToKeepInstances, 1, "");
     RTX_OPTION("rtx", uint32_t, numFramesToKeepBLAS, 1, "");
+    RTX_OPTION("rtx", bool, logGeometryLifecycle, false,
+               "Diagnostic: log BlasEntry / instance / replacement-instance creation and eviction "
+               "([GeomLife] lines, with asset-rule geometry hashes) to identify which assets "
+               "de-materialize and rebuild during camera motion. Very verbose; leave off unless investigating.");
     RTX_OPTION("rtx", uint32_t, numFramesToKeepLights, 100, ""); // NOTE: This was the default we've had for a while, can probably be reduced...
     RTX_OPTION("rtx", uint32_t, sceneKeepAliveFrames, 0, 
                "Number of consecutive frames without valid camera or raytracing before clearing the scene."
