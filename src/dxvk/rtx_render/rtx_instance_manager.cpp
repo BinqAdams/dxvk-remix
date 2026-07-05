@@ -930,6 +930,12 @@ namespace dxvk {
 
     // Rest of the setup happens in updateInstance()
 
+    if (RtxOptions::logGeometryLifecycle()) {
+      Logger::info(str::format("[GeomLife] ", currentFrameIdx,
+        " INST-ADD id=", currentInstance->getId(),
+        " assetHash=0x", std::hex, blas.input.getHash(RtxOptions::geometryAssetHashRule()), std::dec));
+    }
+
     // Notify events after instance has been added
     for (auto& event : m_eventHandlers)
       event.onInstanceAddedCallback(*currentInstance);
@@ -1416,6 +1422,16 @@ namespace dxvk {
   }
 
   void InstanceManager::removeInstance(RtInstance* instance) {
+    if (RtxOptions::logGeometryLifecycle() && !instance->m_isCreatedByRenderer) {
+      const uint32_t currentFrameIdx = m_device->getCurrentFrameId();
+      const BlasEntry* blas = instance->getBlas();
+      Logger::info(str::format("[GeomLife] ", currentFrameIdx,
+        " INST-DEL id=", instance->getId(),
+        " assetHash=0x", std::hex,
+        blas != nullptr ? blas->input.getHash(RtxOptions::geometryAssetHashRule()) : 0, std::dec,
+        " replacement=", instance->getPrimInstanceOwner().getReplacementInstance() != nullptr ? 1 : 0,
+        " ageFrames=", currentFrameIdx - instance->m_frameCreated));
+    }
     // Always clean up replacement instance references, even for renderer-created instances
     // to avoid use-after-free bugs in ReplacementInstance.prims
     instance->getPrimInstanceOwner().setReplacementInstance(nullptr, ReplacementInstance::kInvalidReplacementIndex, instance, PrimInstance::Type::Instance);

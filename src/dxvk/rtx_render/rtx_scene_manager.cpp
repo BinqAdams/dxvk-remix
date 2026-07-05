@@ -336,6 +336,12 @@ namespace dxvk {
       for (auto iter = entries.begin(); iter != entries.end(); ) {
         if (iter->second.frameLastTouched < oldestFrame &&
             iter->second.getLinkedInstances().empty()) {
+          if (RtxOptions::logGeometryLifecycle()) {
+            Logger::info(str::format("[GeomLife] ", m_device->getCurrentFrameId(),
+              " BLASENTRY-EVICT hash=0x", std::hex, iter->first,
+              " assetHash=0x", iter->second.input.getHash(RtxOptions::geometryAssetHashRule()), std::dec,
+              " lastTouched=", iter->second.frameLastTouched));
+          }
           unregisterGeometryBuffers(iter->second.modifiedGeometryData);
           iter = entries.erase(iter);
         } else {
