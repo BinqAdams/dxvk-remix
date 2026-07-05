@@ -372,6 +372,11 @@ private:
   // (rtx.materializationBudgetTrianglesPerFrame); reset in onFrameEnd.
   uint32_t m_materializedTrianglesThisFrame = 0;
 
+  // True when the most recent processDrawCallState call skipped a NEW geometry
+  // because of the materialization budget (as opposed to returning nullptr for
+  // an ignored material). Read by callers that must retry next frame.
+  bool m_lastDrawDeferredByBudget = false;
+
   CameraManager m_cameraManager;
 
   std::unique_ptr<AssetReplacer> m_pReplacer;
