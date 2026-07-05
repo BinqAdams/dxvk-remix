@@ -356,6 +356,14 @@ namespace dxvk {
       return;
     }
 
+    if (RtxOptions::logGeometryLifecycle()) {
+      Logger::info(str::format("[GeomLife] ", m_device->getCurrentFrameId(),
+        " RI-EVICT identityHash=0x", std::hex, replacementInstance->identityHash, std::dec,
+        " prims=", replacementInstance->prims.size(),
+        " lastSeen=", replacementInstance->frameLastSeen,
+        " ageFrames=", m_device->getCurrentFrameId() - replacementInstance->frameCreated));
+    }
+
     m_identityHashMap.erase(replacementInstance->identityHash);
 
     eraseFromSpatialMap(m_assetSpatialMaps, replacementInstance->spatialMapHash,
