@@ -369,6 +369,10 @@ private:
 
   DrawCallCache m_drawCallCache;
 
+  // Triangles of new geometry admitted for materialization this frame
+  // (rtx.materializationBudgetTrianglesPerFrame); reset in onFrameEnd.
+  uint32_t m_materializedTrianglesThisFrame = 0;
+
   CameraManager m_cameraManager;
 
   std::unique_ptr<AssetReplacer> m_pReplacer;
