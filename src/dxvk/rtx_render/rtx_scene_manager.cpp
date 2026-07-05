@@ -524,6 +524,7 @@ namespace dxvk {
 
     m_cameraManager.onFrameEnd();
     m_instanceManager.onFrameEnd();
+    m_materializedTrianglesThisFrame = 0;
     m_previousFrameSceneAvailable = raytracedThisFrame && RtxOptions::enablePreviousTLAS();
 
     m_bufferCache.clear();
@@ -1366,9 +1367,35 @@ namespace dxvk {
 
     ObjectCacheState result = ObjectCacheState::kInvalid;
     BlasEntry* pBlas = nullptr;
-    if (m_drawCallCache.get(drawCallState, &pBlas) == DrawCallCache::CacheState::kExisted) {
+    // Per-frame materialization budget: cap the triangles of NEW geometry
+    // (cache misses = full upload + BLAS build) admitted per frame. Over-budget
+    // draws are skipped without allocating an entry; visible draws are
+    // resubmitted by the game every frame, so deferred geometry materializes on
+    // a following frame — brief pop-in at the frustum edge instead of a frame
+    // spike when many objects enter view at once. The first new geometry of a
+    // frame is always admitted so a single mesh larger than the whole budget
+    // still makes progress.
+    const uint32_t materializationBudget = RtxOptions::materializationBudgetTrianglesPerFrame();
+    bool allowNewGeometry = true;
+    uint32_t newGeometryTriangles = 0;
+    if (materializationBudget > 0) {
+      newGeometryTriangles = drawCallState.getGeometryData().calculatePrimitiveCount();
+      allowNewGeometry = m_materializedTrianglesThisFrame == 0 ||
+        m_materializedTrianglesThisFrame + newGeometryTriangles <= materializationBudget;
+    }
+    const DrawCallCache::CacheState cacheState = m_drawCallCache.get(drawCallState, &pBlas, allowNewGeometry);
+    if (cacheState == DrawCallCache::CacheState::kRejectedBudget) {
+      if (RtxOptions::logGeometryLifecycle()) {
+        Logger::info(str::format("[GeomLife] ", m_device->getCurrentFrameId(),
+          " MAT-DEFER assetHash=0x", std::hex, drawCallState.getHash(RtxOptions::geometryAssetHashRule()), std::dec,
+          " tris=", newGeometryTriangles));
+      }
+      return nullptr;
+    }
+    if (cacheState == DrawCallCache::CacheState::kExisted) {
       result = onSceneObjectUpdated(ctx, drawCallState, pBlas);
     } else {
+      m_materializedTrianglesThisFrame += newGeometryTriangles;
       result = onSceneObjectAdded(ctx, drawCallState, pBlas);
     }
     
