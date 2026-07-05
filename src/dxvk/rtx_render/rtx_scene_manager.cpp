@@ -722,6 +722,7 @@ namespace dxvk {
     const bool usePreservePath =
         RtxOptions::enablePreservePath() &&
         replacementInstance->dirtyFlags.isClear() &&
+        !replacementInstance->pendingMaterialization &&
         !RtxOptionManager::isDrawcallTranslationInvalid() &&
         !secondSubmissionThisFrame &&
         !input.getCategoryFlags().test(InstanceCategories::ParticleEmitter) &&
@@ -754,6 +755,7 @@ namespace dxvk {
 
         RtInstance* instance = processDrawCallState(ctx, input, renderMaterialData,
             *replacementInstance, existingInstance, nullptr);
+        replacementInstance->pendingMaterialization = m_lastDrawDeferredByBudget;
         if (instance != nullptr) {
           if (replacementInstance->root.getUntyped() == nullptr) {
             replacementInstance->setup(PrimInstance(instance, PrimInstance::Type::Instance), 1, nullptr);
@@ -925,6 +927,8 @@ namespace dxvk {
       return replacementInstance->prims[idx].getInstance();
     };
 
+    bool anyPrimDeferredByBudget = false;
+
     for (size_t i = 0; i < pReplacements->size(); i++) {
       auto& replacement = (*pReplacements)[i];
       RtInstance* instance = nullptr;
@@ -940,6 +944,7 @@ namespace dxvk {
 
         const RtxParticleSystemDesc* pParticleSystemDesc = replacement.particleSystem.has_value() ? &replacement.particleSystem.value() : nullptr;
         instance = processDrawCallState(ctx, *newDrawCallState, renderMaterialData, *replacementInstance, getExistingInstance(i), pParticleSystemDesc);
+        anyPrimDeferredByBudget |= m_lastDrawDeferredByBudget;
       }
 
       if (instance != nullptr) {
@@ -953,6 +958,8 @@ namespace dxvk {
         }
       }
     }
+
+    replacementInstance->pendingMaterialization = anyPrimDeferredByBudget;
 
     processReplacementLights(input, pReplacements, replacementInstance);
     processReplacementGraphs(ctx, input, pReplacements, replacementInstance);
@@ -1366,30 +1373,34 @@ namespace dxvk {
   RtInstance* SceneManager::processDrawCallState(const Rc<DxvkContext>& ctx, const DrawCallState& drawCallState, const MaterialData& renderMaterialData, ReplacementInstance& replacementInstance, RtInstance* existingInstance, const RtxParticleSystemDesc* pParticleSystemDesc) {
     ScopedCpuProfileZone();
 
+    m_lastDrawDeferredByBudget = false;
+
     if (renderMaterialData.getIgnored()) {
       return nullptr;
     }
 
     ObjectCacheState result = ObjectCacheState::kInvalid;
     BlasEntry* pBlas = nullptr;
-    // Per-frame materialization budget: cap the triangles of NEW geometry
-    // (cache misses = full upload + BLAS build) admitted per frame. Over-budget
-    // draws are skipped without allocating an entry; visible draws are
-    // resubmitted by the game every frame, so deferred geometry materializes on
-    // a following frame — brief pop-in at the frustum edge instead of a frame
-    // spike when many objects enter view at once. The first new geometry of a
-    // frame is always admitted so a single mesh larger than the whole budget
-    // still makes progress.
+    // Per-frame materialization budget: bound the triangles of NEW geometry
+    // (cache misses = full upload + BLAS build) admitted per frame. Admission
+    // is allowed while the frame's counter is still under budget (the last
+    // admission may overshoot by one mesh — a hard "must fit" rule would
+    // starve meshes larger than the budget whenever a trickle of small new
+    // geometry, e.g. particles, runs earlier in the frame's draw order).
+    // Over-budget draws are skipped without allocating an entry and retried on
+    // subsequent frames: originals via the game's per-frame resubmission,
+    // replacement prims via ReplacementInstance::pendingMaterialization which
+    // keeps the RI off the preserve path until nothing was deferred.
     const uint32_t materializationBudget = RtxOptions::materializationBudgetTrianglesPerFrame();
     bool allowNewGeometry = true;
     uint32_t newGeometryTriangles = 0;
     if (materializationBudget > 0) {
       newGeometryTriangles = drawCallState.getGeometryData().calculatePrimitiveCount();
-      allowNewGeometry = m_materializedTrianglesThisFrame == 0 ||
-        m_materializedTrianglesThisFrame + newGeometryTriangles <= materializationBudget;
+      allowNewGeometry = m_materializedTrianglesThisFrame < materializationBudget;
     }
     const DrawCallCache::CacheState cacheState = m_drawCallCache.get(drawCallState, &pBlas, allowNewGeometry);
     if (cacheState == DrawCallCache::CacheState::kRejectedBudget) {
+      m_lastDrawDeferredByBudget = true;
       if (RtxOptions::logGeometryLifecycle()) {
         Logger::info(str::format("[GeomLife] ", m_device->getCurrentFrameId(),
           " MAT-DEFER assetHash=0x", std::hex, drawCallState.getHash(RtxOptions::geometryAssetHashRule()), std::dec,
