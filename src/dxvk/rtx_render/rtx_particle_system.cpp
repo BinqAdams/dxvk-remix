@@ -863,7 +863,12 @@ namespace dxvk {
       }
 
       // This is used to uniquely hash particle system geometry data - we do this because the particle data is hashed differently from regular D3D9 geometry.
-      const XXH64_hash_t particleHashConstant = XXH3_64bits_withSeed(&numParticles, sizeof(numParticles), particleSystem.getHash());
+      // Seed with the per-incarnation draw hash seed (not getHash()): a
+      // re-created system must never reuse a dead incarnation's geometry
+      // hashes, or the draw call cache re-materializes the dead system's
+      // stale BLAS vertex snapshot (ghost particles at old spawn locations
+      // whenever rtx.numFramesToKeepBLAS retains entries across the churn).
+      const XXH64_hash_t particleHashConstant = XXH3_64bits_withSeed(&numParticles, sizeof(numParticles), particleSystem.getDrawHashSeed());
 
       const DxvkBufferSlice& vertexSlice = DxvkBufferSlice(particleSystem.getVertexBuffer());
       const DxvkBufferSlice& indexSlice = DxvkBufferSlice(particleSystem.getIndexBuffer());
@@ -917,6 +922,7 @@ namespace dxvk {
     // Store this hash since it cannot change now.
     // NOTE: This material data hash is stable within a run, but since hash depends on VK handles, it is not reliable across runs.
     m_cachedHash = materialData.getHash() ^ desc.calcHash();
+    m_cachedDrawHashSeed = XXH3_64bits_withSeed(&seed, sizeof(seed), m_cachedHash);
     context.numVerticesPerParticle = getVerticesPerParticle();
 
     // Copy CPU-only animation data from RtxParticleSystemDesc
