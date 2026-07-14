@@ -113,6 +113,14 @@ public:
   }
 
   void clear() {
+    // Run component cleanup for every instance before destroying the batches,
+    // otherwise components that acquire external resources on initialize (e.g.
+    // RtxOptionLayerAction's ref-counted option layers) leak on this bulk path
+    // and their effects persist after the graph is gone (stale per-level option
+    // layers stacking up across level changes).
+    for (auto& batch : m_batches) {
+      batch.second.removeAllInstances();
+    }
     m_batches.clear();
     m_graphInstances.clear();
   }
