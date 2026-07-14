@@ -85,6 +85,7 @@ namespace dxvk {
       Resources::Resource m_animationState;
 
       XXH64_hash_t m_cachedHash = kEmptyHash;
+      XXH64_hash_t m_cachedDrawHashSeed = kEmptyHash;
 
     public:
       const MaterialData materialData;
@@ -117,6 +118,17 @@ namespace dxvk {
 
       XXH64_hash_t getHash() const {
         return m_cachedHash;
+      }
+
+      // Hash seed for the synthetic draw's geometry hashes. Unlike getHash()
+      // (stable per material+desc, used as the system map key), this folds in
+      // the per-incarnation creation seed: re-created systems must never
+      // produce the geometry hashes of a dead incarnation, or the draw call
+      // cache can re-materialize the dead system's stale BLAS vertex
+      // snapshot (ghost particles at old spawn locations when
+      // rtx.numFramesToKeepBLAS retains entries across the churn window).
+      XXH64_hash_t getDrawHashSeed() const {
+        return m_cachedDrawHashSeed;
       }
 
       const Rc<ConservativeCounter>& getCounter() const {
