@@ -239,11 +239,27 @@ void RtGraphBatch::removeAllInstances() {
   // This removes all of the instances and clears out the per-instance data
   // It retains the graph structure (the list of components and their properties).
 
+  // Run each component's cleanup callback for every instance before dropping
+  // the per-instance data. Without this, components that acquire external
+  // resources in their initialize callback (e.g. RtxOptionLayerAction, which
+  // ref-counts an RtxOptionManager layer) leak them on a bulk clear: the
+  // per-instance removeInstance() path runs cleanup, but this bulk path and
+  // GraphManager::clear() previously did not, so option layers survived the
+  // graph and stayed enabled across level changes.
+  for (auto& batch : m_componentBatches) {
+    const auto* spec = batch->getSpec();
+    if (spec && spec->cleanup) {
+      for (size_t index = 0; index < m_graphInstances.size(); index++) {
+        spec->cleanup(*batch, index);
+      }
+    }
+  }
+
   m_graphInstances.clear();
 
   // clear out the contents of each of the property vectors, but keep the actual vectors around.
   for (auto& prop : m_properties) {
-    // std::visit is needed because m_properties are variants.  
+    // std::visit is needed because m_properties are variants.
     // This simply resolves them to an std::vector<T>.
     std::visit([](auto& vec) { vec.clear(); }, prop);
   }
