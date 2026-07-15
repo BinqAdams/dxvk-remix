@@ -2751,7 +2751,10 @@ namespace dxvk {
     // the non-raytraced frame path; until the texture is resident this returns
     // nullptr and the original is sampled for a frame or two.
     uint32_t textureIndex;
-    getSceneManager().trackTexture(albedoOpacity, textureIndex, true, false);
+    // async=true: the texture still samples the original until resident (same
+    // visual behavior), but avoids setting m_requiresSyncFlush, which would
+    // drag the rtxio flush onto the frame thread (dxvk-cs) as a blocking stall.
+    getSceneManager().trackTexture(albedoOpacity, textureIndex, true, true);
     if (albedoOpacity.isImageEmpty())
       return nullptr;
 
@@ -2776,7 +2779,10 @@ namespace dxvk {
 
       if (albedoOpacity.isValid()) {
         uint32_t textureIndex;
-        getSceneManager().trackTexture(albedoOpacity, textureIndex, true, false);
+        // async=true: the texture still samples the original until resident (same
+    // visual behavior), but avoids setting m_requiresSyncFlush, which would
+    // drag the rtxio flush onto the frame thread (dxvk-cs) as a blocking stall.
+    getSceneManager().trackTexture(albedoOpacity, textureIndex, true, true);
 
         if (!albedoOpacity.isImageEmpty()) {
           replacementTextureSlot = drawCallState.getMaterialData().colorTextureSlot[0];
