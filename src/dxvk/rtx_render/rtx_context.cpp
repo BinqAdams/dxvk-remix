@@ -2752,10 +2752,12 @@ namespace dxvk {
     // the non-raytraced frame path; until the texture is resident this returns
     // nullptr and the original is sampled for a frame or two.
     uint32_t textureIndex;
-    // async=true: the texture still samples the original until resident (same
-    // visual behavior), but avoids setting m_requiresSyncFlush, which would
-    // drag the rtxio flush onto the frame thread (dxvk-cs) as a blocking stall.
-    getSceneManager().trackTexture(albedoOpacity, textureIndex, true, true);
+    // async=false (sync flush) is required here: on RT-disengaged menu frames
+    // nothing else drives the replacement to residency, so async load leaves the
+    // menu sampling the low-res original indefinitely. The frame-thread rtxio
+    // flush is acceptable on this path because the 2D menu is low-load (not the
+    // heavy-combat GPU-starvation path the gameplay tracks avoid).
+    getSceneManager().trackTexture(albedoOpacity, textureIndex, true, false);
     if (albedoOpacity.isImageEmpty())
       return nullptr;
 
