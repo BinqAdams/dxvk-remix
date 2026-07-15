@@ -2751,12 +2751,17 @@ namespace dxvk {
     // the non-raytraced frame path; until the texture is resident this returns
     // nullptr and the original is sampled for a frame or two.
     uint32_t textureIndex;
-    // async=false (sync flush) is required here: on RT-disengaged menu frames
-    // nothing else drives the replacement to residency, so async load leaves the
-    // menu sampling the low-res original indefinitely. The frame-thread rtxio
-    // flush is acceptable on this path because the 2D menu is low-load (not the
-    // heavy-combat GPU-starvation path the gameplay tracks avoid).
-    getSceneManager().trackTexture(albedoOpacity, textureIndex, true, false);
+    // Async only when a valid 3D camera is present. Rasterized replacements cover
+    // both in-gameplay HUD/UI (camera valid) and 2D menus (RT-disengaged, no camera):
+    //  - Gameplay: the per-frame RT-path submitTexturesToDeviceLocal + ongoing rtxio
+    //    drive the load resident within a frame or two, so async avoids a frame-thread
+    //    rtxio sync-flush (the heavy-combat GPU-starvation stall we must not reintroduce
+    //    on the HUD path).
+    //  - Menu: nothing drives the async queue on RT-disengaged frames, so async would
+    //    leave the menu sampling the low-res original indefinitely; force sync residency
+    //    (harmless, the 2D menu is low-load).
+    const bool cameraValid = getSceneManager().getCamera().isValid(m_device->getCurrentFrameId());
+    getSceneManager().trackTexture(albedoOpacity, textureIndex, true, cameraValid);
     if (albedoOpacity.isImageEmpty())
       return nullptr;
 
