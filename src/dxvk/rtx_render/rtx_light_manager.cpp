@@ -386,6 +386,9 @@ namespace dxvk {
     const float cullFadeStartWU = cullFadeStartMeters * meterToWorld;
     const float cullRadiusSqrWU = cullRadiusWU * cullRadiusWU;
     const Vector3 mainCameraPosWU = cameraManager.getMainCamera().getPosition(false);
+    // PKRTX: lights whose initial hash is in this allowlist are exempt from
+    // distance culling (e.g. USDA-authored key lights with absolute transforms).
+    const auto& neverCullHashes = LightManager::distanceCullLights::neverCullLights();
 
     // Returns a fade factor in [0, 1]:
     //   0.0 => fully culled (do not write to GPU buffer)
@@ -394,6 +397,9 @@ namespace dxvk {
     auto getDistanceFadeFactor = [&](const RtLight& light) -> float {
       if (!enableDistanceCull || cullRadiusWU <= 0.0f) {
         return 1.0f;
+      }
+      if (!neverCullHashes.empty() && lookupHash(neverCullHashes, light.getInitialHash())) {
+        return 1.0f; // never-cull allowlist: always keep this light
       }
       if (light.getType() == RtLightType::Distant) {
         return 1.0f;
