@@ -2752,17 +2752,16 @@ namespace dxvk {
     // the non-raytraced frame path; until the texture is resident this returns
     // nullptr and the original is sampled for a frame or two.
     uint32_t textureIndex;
-    // Async only when a valid 3D camera is present. Rasterized replacements cover
-    // both in-gameplay HUD/UI (camera valid) and 2D menus (RT-disengaged, no camera):
-    //  - Gameplay: the per-frame RT-path submitTexturesToDeviceLocal + ongoing rtxio
-    //    drive the load resident within a frame or two, so async avoids a frame-thread
-    //    rtxio sync-flush (the heavy-combat GPU-starvation stall we must not reintroduce
-    //    on the HUD path).
-    //  - Menu: nothing drives the async queue on RT-disengaged frames, so async would
-    //    leave the menu sampling the low-res original indefinitely; force sync residency
-    //    (harmless, the 2D menu is low-load).
+    // pinFullMips: rasterized replacements have no sampler-feedback leader (only
+    // ray-tracing shaders write that GPU signal), so without the pin they render at
+    // their lowest mip. Pinning is independent of how the load is scheduled.
+    // async is gated on a valid 3D camera: in gameplay (HUD/UI) async keeps the load
+    // off the frame thread, avoiding the heavy-combat rtxio sync-flush stall; on
+    // RT-disengaged menu frames nothing drives the async queue, so load synchronously
+    // (harmless, the 2D menu is low-load).
     const bool cameraValid = getSceneManager().getCamera().isValid(m_device->getCurrentFrameId());
-    getSceneManager().trackTexture(albedoOpacity, textureIndex, true, cameraValid);
+    getSceneManager().trackTexture(albedoOpacity, textureIndex, true, /*async*/ cameraValid,
+                                   SAMPLER_FEEDBACK_INVALID, /*pinFullMips*/ true);
     if (albedoOpacity.isImageEmpty())
       return nullptr;
 
@@ -2787,10 +2786,12 @@ namespace dxvk {
 
       if (albedoOpacity.isValid()) {
         uint32_t textureIndex;
-        // async=true: the texture still samples the original until resident (same
-    // visual behavior), but avoids setting m_requiresSyncFlush, which would
-    // drag the rtxio flush onto the frame thread (dxvk-cs) as a blocking stall.
-    getSceneManager().trackTexture(albedoOpacity, textureIndex, true, true);
+        // The sky replacement has no sampler-feedback leader to drive mip promotion
+        // (only ray-tracing shaders write that GPU signal), so it must be pinned to
+        // full mips or it renders at its lowest mip. async=true keeps the load off
+        // the frame thread, so no blocking rtxio flush is scheduled.
+        getSceneManager().trackTexture(albedoOpacity, textureIndex, true, /*async*/ true,
+                                       SAMPLER_FEEDBACK_INVALID, /*pinFullMips*/ true);
 
         if (!albedoOpacity.isImageEmpty()) {
           replacementTextureSlot = drawCallState.getMaterialData().colorTextureSlot[0];
