@@ -92,7 +92,7 @@ namespace dxvk {
       * \param [in] async If a texture is allowed to be loaded asynchronously.
       * \param [out] textureIndexOut Index of the added texture in resource table.
       */
-    void addTexture(const TextureRef&  inputTexture, uint16_t associatedFeedbackStamp, bool async, uint32_t& textureIndexOut);
+    void addTexture(const TextureRef&  inputTexture, uint16_t associatedFeedbackStamp, bool async, bool pinFullMips, uint32_t& textureIndexOut);
 
     /**
       * \brief Submit staging-to-device texture uploads, that are currently ready from async thread.
@@ -148,7 +148,7 @@ namespace dxvk {
      * \p async controls whether the texture may be loaded asynchronously; when false, all
      * mips are scheduled immediately on this thread and the texture is marked non-demotable.
      */
-    void preserveTexture(uint32_t textureIndex, uint16_t leaderSamplerFeedbackStamp, bool async = true);
+    void preserveTexture(uint32_t textureIndex, uint16_t leaderSamplerFeedbackStamp, bool async = true, bool pinFullMips = false);
 
     // Do not use. This is here temporarily for WAR for REMIX-1557
     void releaseTexture(TextureRef& textureRef) {
