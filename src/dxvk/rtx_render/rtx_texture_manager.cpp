@@ -920,7 +920,7 @@ namespace dxvk {
     }
   }
 
-  void RtxTextureManager::addTexture(const TextureRef& inputTexture, uint16_t associatedFeedbackStamp, bool async, uint32_t& textureIndexOut) {
+  void RtxTextureManager::addTexture(const TextureRef& inputTexture, uint16_t associatedFeedbackStamp, bool async, bool pinFullMips, uint32_t& textureIndexOut) {
     if (!inputTexture.isValid()) {
       return;
     }
@@ -940,10 +940,15 @@ namespace dxvk {
       return;
     }
 
-    if (!async || RtxOptions::TextureManager::neverDowngradeTextures()) {
+    // Pin to full mips, and never demote, when either the caller cannot allow async
+    // scheduling or it has no sampler-feedback leader to drive mip promotion
+    // (rasterized sky/UI, dome light). Those paths get no GPU feedback signal, so
+    // without the pin the texture stays at its lowest requested mip forever.
+    // `async` selects only HOW the load is scheduled, never whether it is pinned.
+    if (!async || pinFullMips || RtxOptions::TextureManager::neverDowngradeTextures()) {
       tex->m_canDemote = false;
       tex->requestMips(MAX_MIPS);
-      scheduleTextureLoad(tex, false);
+      scheduleTextureLoad(tex, async);
       return;
     }
     updateSamplerFeedback(tex, associatedFeedbackStamp);

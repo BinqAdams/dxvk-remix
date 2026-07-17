@@ -1470,7 +1470,8 @@ namespace dxvk {
                                   uint32_t& textureIndex,
                                   bool hasTexcoords,
                                   bool async,
-                                  uint16_t* inout_samplerFeedbackStamp) {
+                                  uint16_t* inout_samplerFeedbackStamp,
+                                  bool pinFullMips) {
     if (!hasTexcoords) {
       ONCE(Logger::info(str::format("[RTX-Compatibility-Info] Trying to bind a texture to a mesh without UVs.  Was this intended?")));
       return;
@@ -1482,7 +1483,7 @@ namespace dxvk {
 
     const uint16_t stamp = inout_samplerFeedbackStamp != nullptr ? *inout_samplerFeedbackStamp : SAMPLER_FEEDBACK_INVALID;
     auto& textureManager = m_device->getCommon()->getTextureManager();
-    textureManager.addTexture(inputTexture, stamp, async, textureIndex);
+    textureManager.addTexture(inputTexture, stamp, async, pinFullMips, textureIndex);
   }
 
   RtInstance* SceneManager::processDrawCallState(const Rc<DxvkContext>& ctx, const DrawCallState& drawCallState, const MaterialData& renderMaterialData, ReplacementInstance& replacementInstance, RtInstance* existingInstance, const RtxParticleSystemDesc* pParticleSystemDesc) {

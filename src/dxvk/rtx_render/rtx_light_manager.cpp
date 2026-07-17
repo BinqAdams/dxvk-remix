@@ -552,10 +552,13 @@ namespace dxvk {
       if (getActiveDomeLight(activeDomeLight)) {
         // Ensures a texture stays in VidMem
         SceneManager& sceneManager = device()->getCommon()->getSceneManager();
-        // async=true: dome light samples the original until resident (same visual
-        // behavior once loaded), avoiding a frame-thread rtxio sync-flush that can
-        // stall/hang the cs thread under heavy-combat VRAM pressure (omm-vram-hang).
-        sceneManager.trackTexture(activeDomeLight.texture, m_gpuDomeLightArgs.textureIndex, true, true);
+        // pinFullMips keeps the dome texture at full mips and non-demotable (this is
+        // the "stays in VidMem" guarantee above); it has no sampler-feedback leader to
+        // drive promotion, so without the pin it would sit at its lowest mip.
+        // async=true keeps the load off the frame thread, avoiding the rtxio sync-flush
+        // that can stall the cs thread under heavy-combat VRAM pressure (omm-vram-hang).
+        sceneManager.trackTexture(activeDomeLight.texture, m_gpuDomeLightArgs.textureIndex, true,
+                                  /*async*/ true, /*inout_samplerFeedbackStamp*/ nullptr, /*pinFullMips*/ true);
 
         if (m_gpuDomeLightArgs.textureIndex != BINDING_INDEX_INVALID) {
           m_gpuDomeLightArgs.active = true;
