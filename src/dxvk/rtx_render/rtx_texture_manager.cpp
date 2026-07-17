@@ -918,7 +918,7 @@ namespace dxvk {
     }
   }
 
-  void RtxTextureManager::addTexture(const TextureRef& inputTexture, uint16_t associatedFeedbackStamp, bool async, uint32_t& textureIndexOut) {
+  void RtxTextureManager::addTexture(const TextureRef& inputTexture, uint16_t associatedFeedbackStamp, bool async, bool pinFullMips, uint32_t& textureIndexOut) {
     // If theres valid texture backing this ref, then skip
     if (!inputTexture.isValid()) {
       return;
@@ -927,7 +927,7 @@ namespace dxvk {
     // Track this texture to make a linear table for this frame
     textureIndexOut = m_textureCache.track(inputTexture);
 
-    preserveTexture(textureIndexOut, associatedFeedbackStamp, async);
+    preserveTexture(textureIndexOut, associatedFeedbackStamp, async, pinFullMips);
   }
 
   void RtxTextureManager::updateSamplerFeedback(const Rc<ManagedTexture>& tex, uint16_t associatedFeedbackStamp) {
@@ -942,7 +942,7 @@ namespace dxvk {
     }
   }
 
-  void RtxTextureManager::preserveTexture(uint32_t textureIndex, uint16_t leaderSamplerFeedbackStamp, bool async) {
+  void RtxTextureManager::preserveTexture(uint32_t textureIndex, uint16_t leaderSamplerFeedbackStamp, bool async, bool pinFullMips) {
     constexpr uint32_t kInvalidSurfaceTextureIndex = 0xFFFFu;
     if (textureIndex == kInvalidSurfaceTextureIndex || textureIndex >= m_textureCache.getTotalCount()) {
       return;
@@ -958,11 +958,15 @@ namespace dxvk {
 
     const auto curframe = m_device->getCurrentFrameId();
     tex->m_frameLastUsed = curframe;
-    // If async is not allowed, schedule immediately on this thread, and never demote
-    if (!async || RtxOptions::TextureManager::neverDowngradeTextures()) {
+    // Pin to full mips, and never demote, when either the caller cannot allow async
+    // scheduling or it has no sampler-feedback leader to drive mip promotion
+    // (rasterized sky/UI, dome light). Those paths get no GPU feedback signal, so
+    // without the pin the texture stays at its lowest requested mip forever.
+    // `async` selects only HOW the load is scheduled, never whether it is pinned.
+    if (!async || pinFullMips || RtxOptions::TextureManager::neverDowngradeTextures()) {
       tex->m_canDemote = false;
       tex->requestMips(MAX_MIPS);
-      scheduleTextureLoad(tex, false);
+      scheduleTextureLoad(tex, async);
       return;
     }
     updateSamplerFeedback(tex, leaderSamplerFeedbackStamp);
