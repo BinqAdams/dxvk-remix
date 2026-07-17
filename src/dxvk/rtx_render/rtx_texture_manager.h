@@ -145,8 +145,11 @@ namespace dxvk {
      * Preserve path: re-run addTexture for the bindless slot so this frame's texture table
      * matches the dynamic path (track + frame usage). \p leaderSamplerFeedbackStamp may be
      * SAMPLER_FEEDBACK_INVALID; addTexture still must run for correct bindless registration.
-     * \p async controls whether the texture may be loaded asynchronously; when false, all
-     * mips are scheduled immediately on this thread and the texture is marked non-demotable.
+     * \p async controls only HOW the load is scheduled (false = immediately on this thread).
+     * \p pinFullMips marks the texture non-demotable and requests all mips. Required for
+     * callers that have no sampler-feedback leader (rasterized sky/UI, dome light): only
+     * ray-tracing shaders write the feedback buffer, so without the pin those textures have
+     * no signal to drive mip promotion and stay at their lowest mip.
      */
     void preserveTexture(uint32_t textureIndex, uint16_t leaderSamplerFeedbackStamp, bool async = true, bool pinFullMips = false);
 
@@ -157,6 +160,12 @@ namespace dxvk {
 
     void requestHotReload(const Rc<ManagedTexture>& tex);
     void processAllHotReloadRequests();
+
+    // PKRTX (TEMPORARY DIAGNOSTIC): log every pinned (non-demotable) texture with its
+    // resident bytes and staleness, plus a total. Pinned textures are excluded from both
+    // demotion paths, so this measures whether pinned replacements (sky / UI / dome light)
+    // stay resident in VRAM after their level is no longer being drawn.
+    void dumpPinnedTextures();
 
   private:
     void scheduleTextureLoad(const Rc<ManagedTexture>& texture, bool async, bool forceUnload = false);
