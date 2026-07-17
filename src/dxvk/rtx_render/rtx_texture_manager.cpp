@@ -986,6 +986,46 @@ namespace dxvk {
     ++m_textureCacheGeneration;
   }
 
+  // PKRTX (TEMPORARY DIAGNOSTIC): see header. Resident bytes are derived from the actual
+  // [m_currentMip_begin, m_currentMip_end) range backing m_currentMipView, so this reports
+  // what is really in VRAM rather than what was requested.
+  void RtxTextureManager::dumpPinnedTextures() {
+    const uint32_t curframe = m_device->getCurrentFrameId();
+    size_t totalBytes = 0;
+    uint32_t count = 0;
+
+    auto ls = std::unique_lock { m_sf.m_idToTexture_mutex };
+
+    Logger::info("=== Pinned (non-demotable) textures ===");
+    for (const auto& tex : m_sf.m_idToTexture) {
+      if (tex == nullptr || tex->m_canDemote) {
+        continue;
+      }
+
+      size_t bytes = 0;
+      if (tex->m_assetData != nullptr && tex->m_currentMip_end > tex->m_currentMip_begin) {
+        bytes = calcSizeForAsset(*tex->m_assetData, tex->m_currentMip_begin, tex->m_currentMip_end);
+      }
+      totalBytes += bytes;
+      ++count;
+
+      const char* name = (tex->m_assetData != nullptr && tex->m_assetData->info().filename != nullptr)
+        ? tex->m_assetData->info().filename
+        : "<unnamed>";
+      const std::string lastDrawn = (tex->m_frameLastUsed == UINT32_MAX)
+        ? std::string("never drawn")
+        : (std::to_string(curframe - tex->m_frameLastUsed) + " frames ago");
+
+      Logger::info(str::format("  ", name,
+                               " | resident ", bytes / 1024u, " KB",
+                               " | mips [", tex->m_currentMip_begin, ",", tex->m_currentMip_end, ")",
+                               " | last drawn ", lastDrawn));
+    }
+
+    Logger::info(str::format("=== Pinned total: ", count, " textures, ",
+                             totalBytes / 1024u / 1024u, " MB resident ==="));
+  }
+
   void RtxTextureManager::requestHotReload(const Rc<ManagedTexture>& tex) {
     if (!RtxOptions::TextureManager::hotReload()) {
       return;

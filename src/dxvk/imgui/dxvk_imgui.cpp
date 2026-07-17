@@ -47,6 +47,7 @@
 #include "rtx_render/rtx_hash_collision_detection.h"
 #include "rtx_render/rtx_options.h"
 #include "rtx_render/rtx_terrain_baker.h"
+#include "rtx_render/rtx_texture_manager.h"
 #include "rtx_render/rtx_neural_radiance_cache.h"
 #include "rtx_render/rtx_ray_reconstruction.h"
 #include "rtx_render/rtx_xess.h"
@@ -4076,6 +4077,12 @@ namespace dxvk {
         ImGui::Dummy({ 0, 2 });
         if (ImGui::Button("Demote All Textures")) {
           ctx->getCommonObjects()->getSceneManager().requestTextureVramFree();
+        }
+        // PKRTX (TEMPORARY DIAGNOSTIC): dumps every pinned (non-demotable) texture with its
+        // resident bytes + how long since it was last drawn, to remix-dxvk.log. Pinned
+        // textures are skipped by both demotion paths, so this shows what is stuck in VRAM.
+        if (ImGui::Button("Dump Pinned Textures (log)")) {
+          ctx->getCommonObjects()->getTextureManager().dumpPinnedTextures();
         }
         RemixGui::Checkbox("Reload Textures on Window Resize", &RtxOptions::reloadTextureWhenResolutionChangedObject());
         ImGui::Unindent();
