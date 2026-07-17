@@ -180,6 +180,8 @@ private:
     RTX_OPTION_ARGS("rtx.distanceCullLights", float, fadeStartMeters, 0.0f,
                     "Distance (in metres) at which lights begin to fade out via linear radiance attenuation. Lights inside fadeStartMeters render at full intensity; between fadeStartMeters and radiusMeters they ramp linearly to zero; beyond radiusMeters they are culled. Set to 0 (the default) or to a value >= radiusMeters for a hard cull with no fade band. Reduces visible popping when lights enter/leave the cull radius as the camera moves.",
                     args.flags = RtxOptionFlags::UserSetting, args.minValue = 0.0f);
+    RTX_OPTION("rtx.distanceCullLights", fast_unordered_set, neverCullLights, {},
+                    "Light initial-hashes (comma-separated 0x hex) that are exempt from distance culling and always kept, regardless of camera distance. Intended for key lights authored in USDA mod layers with absolute/world-space transforms (stable initial hash). Read a light's hash from the Remix dev-menu light overview (Initial Hash, copy-to-clipboard).");
   };
 
   // Legacy light translation Options
