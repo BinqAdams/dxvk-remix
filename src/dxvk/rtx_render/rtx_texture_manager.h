@@ -97,10 +97,15 @@ namespace dxvk {
       * \brief Adds a texture to the resource manager.
       * \param [in] inputTexture The texture to be added.
       * \param [in] associatedFeedbackStamp A sampler feedback stamp from which to inherit a sampled mip count (written on GPU).
-      * \param [in] async If a texture is allowed to be loaded asynchronously.
+      * \param [in] async If a texture is allowed to be loaded asynchronously. Selects only HOW
+      *  the load is scheduled, never whether the texture is pinned.
+      * \param [in] pinFullMips Pin to full mips and mark non-demotable even when async. Required
+      *  for callers with no sampler-feedback leader (rasterized sky/UI replacements, dome light):
+      *  only ray-tracing shaders write the feedback buffer, so without the pin those textures
+      *  have no signal to drive mip promotion and stay at their lowest requested mip forever.
       * \param [out] textureIndexOut Index of the added texture in resource table.
       */
-    void addTexture(const TextureRef&  inputTexture, uint16_t associatedFeedbackStamp, bool async, uint32_t& textureIndexOut);
+    void addTexture(const TextureRef&  inputTexture, uint16_t associatedFeedbackStamp, bool async, bool pinFullMips, uint32_t& textureIndexOut);
 
     /**
       * \brief Submit staging-to-device texture uploads, that are currently ready from async thread.
