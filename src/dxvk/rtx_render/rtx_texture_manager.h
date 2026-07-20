@@ -161,12 +161,6 @@ namespace dxvk {
     void requestHotReload(const Rc<ManagedTexture>& tex);
     void processAllHotReloadRequests();
 
-    // PKRTX (TEMPORARY DIAGNOSTIC): log every pinned (non-demotable) texture with its
-    // resident bytes and staleness, plus a total. Pinned textures are excluded from both
-    // demotion paths, so this measures whether pinned replacements (sky / UI / dome light)
-    // stay resident in VRAM after their level is no longer being drawn.
-    void dumpPinnedTextures();
-
   private:
     void scheduleTextureLoad(const Rc<ManagedTexture>& texture, bool async, bool forceUnload = false);
 
