@@ -962,6 +962,7 @@ namespace dxvk {
         // game's original material data.
         if (!replacement.includeOriginal && replacement.type == AssetReplacement::eMesh && replacement.materialData != nullptr) {
           renderMaterialData = *replacement.materialData;
+          newDrawCallState->usesReplacementMaterial = true;
         }
 
         const RtxParticleSystemDesc* pParticleSystemDesc = replacement.particleSystem.has_value() ? &replacement.particleSystem.value() : nullptr;
