@@ -769,6 +769,13 @@ struct DrawCallState {
   // since it may be world geometry that should go through reprojection instead.
   bool skyAutoDetected = false;
 
+  // Set when a mesh replacement supplied its own authored material (the render material
+  // came from the replacement USD rather than the captured draw). Consumed by
+  // updateInstance to keep the original draw's fixed-function texture-stage ops from
+  // rewriting the authored albedo/emissive/opacity in-shader
+  // (see rtx.ignoreFixedFunctionTextureOpsOnReplacementMaterials).
+  bool usesReplacementMaterial = false;
+
   void setupCategoriesForTexture();
   void setupCategoriesForGeometry();
   void setupCategoriesForHeuristics(uint32_t prevFrameSeenCamerasCount,

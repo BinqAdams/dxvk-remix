@@ -1068,6 +1068,16 @@ namespace dxvk {
         currentInstance.surface.associatedGeometryHash = drawCall.getHash(RtxOptions::geometryAssetHashRule());
         currentInstance.surface.isTextureFactorBlend = drawCall.getMaterialData().isTextureFactorBlend;
         currentInstance.surface.isVertexColorBakedLighting = drawCall.getMaterialData().isVertexColorBakedLighting;
+
+        // A mesh replacement's authored material is the author's intent; the captured
+        // draw's fixed-function texture-stage ops would rewrite its albedo/emissive/opacity
+        // in-shader (normal/roughness/metallic are fetched outside that block and would
+        // still apply, leaving a confusing partial override). Neutralize them.
+        if (drawCall.usesReplacementMaterial && RtxOptions::ignoreFixedFunctionTextureOpsOnReplacementMaterials()) {
+          currentInstance.surface.textureColorOperation = DxvkRtTextureOperation::Disable;
+          currentInstance.surface.textureAlphaOperation = DxvkRtTextureOperation::Disable;
+          currentInstance.surface.isTextureFactorBlend = false;
+        }
         currentInstance.surface.isMotionBlurMaskOut = currentInstance.testCategoryFlags(InstanceCategories::IgnoreMotionBlur);
         currentInstance.surface.ignoreTransparencyLayer = currentInstance.testCategoryFlags(InstanceCategories::IgnoreTransparencyLayer);
 

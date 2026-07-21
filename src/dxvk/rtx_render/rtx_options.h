@@ -361,6 +361,10 @@ namespace dxvk {
                     args.minValue = 0.0f, args.maxValue = 1.0f);
     RTX_OPTION("rtx", bool, vertexColorIsBakedLighting, true, "If true, brightness contribution will be removed from the vertex color by dividing each component by the largest component.");
     RTX_OPTION("rtx", bool, ignoreAllVertexColorBakedLighting, false, "If true, all baked lighting bound to all vertex colors will be ignored.");
+    RTX_OPTION("rtx", bool, ignoreFixedFunctionTextureOpsOnReplacementMaterials, true,
+               "If true, draw calls whose material was replaced by a mesh replacement's authored USD material do not re-apply the original draw's fixed-function texture-stage operations (color/alpha ops, texture-factor blend) to the material output.\n"
+               "The captured fixed-function state belongs to the original game's look; re-applying it can rewrite the authored albedo/emissive/opacity in-shader (for example an untextured draw whose stage-0 color op is SELECTARG2(DIFFUSE) replaces the authored albedo with vertex color entirely), while normal/roughness/metallic are unaffected, which makes replacement materials appear to partially not work.\n"
+               "Disable to restore the previous behavior where legacy texture-stage ops also modulate replacement materials.");
     RTX_OPTION("rtx", bool, allowFSE, false,
                "A flag indicating if the application should be able to utilize exclusive full screen mode when set to true, otherwise force it to be disabled when set to false.\n"
                "Exclusive full screen may see performance benefits over other fullscreen modes at the cost of stability in some cases.\n"
