@@ -62,6 +62,8 @@
   X(SpriteSheetRows,                  sprite_sheet_rows,                      uint8_t,        0,                          255,                       0) \
   X(SpriteSheetCols,                  sprite_sheet_cols,                      uint8_t,        0,                          255,                       0) \
   X(SpriteSheetFPS,                   sprite_sheet_fps,                       uint8_t,        0,                          255,                       0) \
+  /* Spritesheet playback: 0 = loop on the global clock (legacy), 1 = play once from instance spawn and hold the last frame, 2 = loop from instance spawn. */ \
+  X(SpriteSheetPlaybackMode,          sprite_sheet_playback_mode,             uint8_t,        0,                          2,                         0) \
   X(EnableThinFilm,                   enable_thin_film,                       bool,           false,                      true,                      false) \
   X(AlphaIsThinFilmThickness,         thin_film_thickness_from_albedo_alpha,  bool,           false,                      true,                      false) \
   /* Note: Thickness cannot be 0 so should be kept above this minimum small value (though in practice it'll likely be   */ \
@@ -116,6 +118,7 @@
   X(SpriteSheetRows,                  sprite_sheet_rows,                  uint8_t,  0,                          255,                       0) \
   X(SpriteSheetCols,                  sprite_sheet_cols,                  uint8_t,  0,                          255,                       0) \
   X(SpriteSheetFPS,                   sprite_sheet_fps,                   uint8_t,  0,                          255,                       0) \
+  X(SpriteSheetPlaybackMode,          sprite_sheet_playback_mode,         uint8_t,  0,                          2,                         0) \
   X(EnableThinWalled,                 thin_walled,                        bool,     false,                      true,                      false) \
   /* Note: 0.001 to be safe around the minimum of float16 values, as well as due to the fact that we cut off */ \
   /* 2 bits of the value in some cases.                                                                      */ \
