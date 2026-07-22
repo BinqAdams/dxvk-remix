@@ -1256,6 +1256,16 @@ namespace {
       return REMIXAPI_ERROR_CODE_GENERAL_FAILURE;
     }
 
+    if (value[0] == '\0') {
+      // Config::findOption treats an empty-valued option as absent, so an empty value
+      // routed through readOption below is silently dropped. Define it instead as
+      // "remove this option's opinion on the user layer": the option then resolves
+      // from weaker layers or its default. This is how a runtime controller returns
+      // a hash-set/vector option (e.g. rtx.particleTexturesExclude) to empty.
+      option->disableLayerValue(dxvk::RtxOptionLayer::getUserLayer());
+      return REMIXAPI_ERROR_CODE_SUCCESS;
+    }
+
     dxvk::Config newSetting;
     newSetting.setOptionMove(std::move(strKey), std::string{ value });
     option->readOption(newSetting, dxvk::RtxOptionLayer::getUserLayer());
