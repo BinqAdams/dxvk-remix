@@ -187,7 +187,9 @@ void calcSpriteSheetAdjustment(
   float timeSinceStartSeconds,
   uint8_t spriteSheetRows,
   uint8_t spriteSheetCols,
-  uint8_t spriteSheetFPS)
+  uint8_t spriteSheetFPS,
+  uint8_t spriteSheetPlaybackMode = 0,
+  float spawnTimeSeconds = 0.f)
 {
   // Note: Fast path for most materials which do not actually use animated spritesheets.
   if (spriteSheetFPS == 0)
@@ -201,7 +203,9 @@ void calcSpriteSheetAdjustment(
     spriteSheetCols,
     spriteSheetFPS,
     uvSize,
-    uvBias);
+    uvBias,
+    spriteSheetPlaybackMode,
+    spawnTimeSeconds);
 
   textureCoordinates = uvBias + frac(textureCoordinates) * uvSize;
   textureGradientX *= uvSize;
@@ -214,12 +218,33 @@ void calcSpritesheetValues(
   uint8_t spriteSheetCols,
   uint8_t spriteSheetFPS,
   inout vec2 uvSize,
-  inout vec2 uvBias
+  inout vec2 uvBias,
+  uint8_t spriteSheetPlaybackMode = 0,
+  float spawnTimeSeconds = 0.f
 )
 {
   const uint numSprites = uint(spriteSheetCols) * uint(spriteSheetRows);
+
+  // Mode 0 animates on the global clock (all instances in phase, loops forever).
+  // Modes 1/2 anchor to the instance's spawn time so each instance starts at frame 0:
+  // mode 1 plays the sheet once and holds the last frame, mode 2 loops from spawn.
+  float effectiveTime = timeSinceStartSeconds;
+  if (spriteSheetPlaybackMode != 0)
+  {
+    effectiveTime -= spawnTimeSeconds;
+    // Both times live in a wrapped 24-bit-millisecond domain (see rtx_context.cpp);
+    // unwrap when the global clock has wrapped past the spawn time.
+    if (effectiveTime < 0.f)
+    {
+      effectiveTime += float(1 << 24) / 1000.f;
+    }
+  }
+
   // Note: timeSinceStartSeconds is clamped to (2^24 - 1) / 1000 on the CPU side so this multiplication shouldn't overflow.
-  const uint frame = (uint(timeSinceStartSeconds * spriteSheetFPS)) % numSprites;
+  const uint rawFrame = uint(effectiveTime * spriteSheetFPS);
+  const uint frame = (spriteSheetPlaybackMode == 1)
+    ? min(numSprites - 1, rawFrame)
+    : rawFrame % numSprites;
 
   uvSize = vec2(1.0f / spriteSheetCols, 1.0f / spriteSheetRows);
   uvBias = vec2(frame % spriteSheetCols, frame / spriteSheetCols) * uvSize;
@@ -709,7 +734,9 @@ SurfaceInteraction surfaceInteractionCreate<let GenerateTangents : bool>(
       cb.timeSinceStartSeconds,
       surface.spriteSheetRows,
       surface.spriteSheetCols,
-      surface.spriteSheetFPS);
+      surface.spriteSheetFPS,
+      surface.spriteSheetPlaybackMode,
+      surface.spawnTimeSeconds);
   }
 
   // Baked terrain is the only surface using cascaded view positions, so key off of that.
