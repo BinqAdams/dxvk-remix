@@ -229,6 +229,9 @@ namespace dxvk {
                   "Textures on draw calls that should be treated as particles.\n"
                   "When objects are marked as particles more approximate rendering methods are leveraged allowing for more effecient and typically better looking particle rendering.\n"
                   "Generally any billboard-like blended particle objects in the original application should be classified this way.");
+    RTX_OPTION("rtx", fast_unordered_set, particleTexturesExclude, {},
+                  "Texture hashes removed from particle categorization even when present in rtx.particleTextures.\n"
+                  "Intended for runtime quality toggles driven by an external controller (e.g. a game-side proxy) via the Remix API: keeping the exclusion separate means the toggle never rewrites the user-authored rtx.particleTextures list (SetConfigVariable cannot read values back). Excluded draws render as regular geometry instead of taking the particle path.");
     RTX_OPTION("rtx", fast_unordered_set, beamTextures, {},
                   "Textures on draw calls that are already particles or emissively blended and have beam-like geometry.\n"
                   "Typically objects marked as particles or objects using emissive blending will be rendered with a special method which allows re-orientation of the billboard geometry assumed to make up the draw call in indirect rays (reflections for example).\n"
