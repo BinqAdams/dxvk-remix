@@ -464,6 +464,22 @@ struct Surface
     set { data13.z = (data13.z & ~(0x3 << 17)) | (uint32_t(newValue & 0x3) << 17); }
   }
 
+  // Spritesheet playback: 0 = loop on the global clock (legacy), 1 = play once from
+  // instance spawn and hold the last frame, 2 = loop from instance spawn.
+  property uint8_t spriteSheetPlaybackMode
+  {
+    get { return uint8_t((data13.z >> 19) & 0x3); }
+    set { data13.z = (data13.z & ~(0x3 << 19)) | (uint32_t(newValue & 0x3) << 19); }
+  }
+
+  // Instance creation time in the same wrapped 24-bit-millisecond domain as
+  // cb.timeSinceStartSeconds; anchors spriteSheetPlaybackMode != 0.
+  property float spawnTimeSeconds
+  {
+    get { return asfloat(data15.w); }
+    set { data15.w = asuint(newValue); }
+  }
+
   property bool isEye
   {
     get { return packedFlagGet(data13.z, 1 << 14); }
