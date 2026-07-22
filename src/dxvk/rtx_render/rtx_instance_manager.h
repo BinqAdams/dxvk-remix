@@ -214,6 +214,11 @@ private:
   mutable uint32_t m_frameLastUpdated = kInvalidFrameIndex;
   mutable uint32_t m_frameCreated = kInvalidFrameIndex;
 
+  // Creation time in the same wrapped 24-bit-millisecond domain as
+  // cb.timeSinceStartSeconds; anchors per-instance spritesheet playback
+  // (RtSurface::spriteSheetPlaybackMode != 0).
+  mutable float m_spawnTimeSeconds = 0.f;
+
   // Particle-emitter spawn-discontinuity guard state, lazily allocated (null for non-emitter instances).
   // Persistent lifecycle state, intentionally not synced in copyInstanceDataFrom.
   mutable std::unique_ptr<EmitterMotionState> m_emitterMotionState;
