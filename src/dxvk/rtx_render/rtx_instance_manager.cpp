@@ -33,6 +33,7 @@
 #include "rtx_materials.h"
 #include "rtx_ray_portal_manager.h"
 #include "rtx_terrain_baker.h"
+#include "../util/util_global_time.h"
 
 #include "../d3d9/d3d9_state.h"
 #include "rtx_matrix_helpers.h"
@@ -156,7 +157,7 @@ namespace dxvk {
   namespace {
     template<int RtInstanceSize> struct CheckRtInstanceSize {
       // The second line of the build error should contain the new size of RtInstance in the template argument, i.e. `dxvk::CheckRtInstanceSize<newSize>`
-      static_assert(RtInstanceSize == 776, "RtInstance size has changed.  Fix the copy constructor above this message, then update the expected size.");
+      static_assert(RtInstanceSize == 792, "RtInstance size has changed.  Fix the copy constructor above this message, then update the expected size.");
     };
     CheckRtInstanceSize<sizeof(RtInstance)> _rtInstanceSizeTest;
   }
@@ -176,6 +177,7 @@ namespace dxvk {
     m_secondaryOpacityTextureIndex = src.m_secondaryOpacityTextureIndex;
     m_secondarySamplerIndex = src.m_secondarySamplerIndex;
     m_isAnimated = src.m_isAnimated;
+    m_spawnTimeSeconds = src.m_spawnTimeSeconds;
     m_opacityMicromapInstanceData = src.m_opacityMicromapInstanceData;
     m_opacityMicromapInstanceData.resetCopiedRequestState();
     m_surfaceIndex = src.m_surfaceIndex;
@@ -890,6 +892,9 @@ namespace dxvk {
     RtInstance* currentInstance = m_instances[instanceIdx];
 
     currentInstance->m_frameCreated = currentFrameIdx;
+    // Same wrapped time domain as cb.timeSinceStartSeconds (rtx_context.cpp).
+    currentInstance->m_spawnTimeSeconds =
+      (static_cast<uint32_t>(GlobalTime::get().absoluteTimeMs()) & ((1U << 24U) - 1U)) / 1000.f;
     
     // Set Instance Vulkan AS Instance information
     {
@@ -1116,6 +1121,8 @@ namespace dxvk {
         }
 
         materialData->getSpriteSheetData(currentInstance.surface.spriteSheetRows, currentInstance.surface.spriteSheetCols, currentInstance.surface.spriteSheetFPS);
+        currentInstance.surface.spriteSheetPlaybackMode = materialData->getSpriteSheetPlaybackMode();
+        currentInstance.surface.spawnTimeSeconds = currentInstance.m_spawnTimeSeconds;
         currentInstance.m_isAnimated = currentInstance.surface.spriteSheetFPS != 0;
         currentInstance.surface.objectPickingValue = drawCall.drawCallID;
 
