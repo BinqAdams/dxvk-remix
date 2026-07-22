@@ -455,7 +455,8 @@ namespace dxvk {
 
     setCategory(InstanceCategories::Hidden, lookupHash(RtxOptions::hideInstanceTextures(), textureHash));
 
-    setCategory(InstanceCategories::Particle, lookupHash(RtxOptions::particleTextures(), textureHash));
+    setCategory(InstanceCategories::Particle, lookupHash(RtxOptions::particleTextures(), textureHash)
+                                              && !lookupHash(RtxOptions::particleTexturesExclude(), textureHash));
     setCategory(InstanceCategories::Beam, lookupHash(RtxOptions::beamTextures(), textureHash));
     setCategory(InstanceCategories::IgnoreTransparencyLayer, lookupHash(RtxOptions::ignoreTransparencyLayerTextures(), textureHash));
 
