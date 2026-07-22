@@ -281,7 +281,8 @@ struct RtSurface {
 
     static_assert(static_cast<uint32_t>(TexGenMode::Count) <= 4);
     textureFlags |= ((static_cast<uint32_t>(texgenMode) & 0x3) << 17);
-    // textureFlags bits 19-30 unused
+    textureFlags |= ((static_cast<uint32_t>(spriteSheetPlaybackMode) & 0x3) << 19);
+    // textureFlags bits 21-30 unused
 
     writeGPUHelper(data, offset, textureFlags);
 
@@ -300,7 +301,8 @@ struct RtSurface {
       writeGPUHelper(data, offset, uint32_t{});
       writeGPUHelper(data, offset, uint32_t{});
     }
-    writeGPUHelper(data, offset, uint32_t{});
+    // Instance spawn time for spriteSheetPlaybackMode != 0 (data15.w, previously padding).
+    writeGPUHelper(data, offset, spawnTimeSeconds);
 
     assert(offset - oldOffset == kSurfaceGPUSize);
   }
@@ -480,6 +482,12 @@ struct RtSurface {
   uint8_t spriteSheetRows = 1;
   uint8_t spriteSheetCols = 1;
   uint8_t spriteSheetFPS = 0;
+  // 0 = loop on the global clock (legacy), 1 = play once from instance spawn and
+  // hold the last frame, 2 = loop from instance spawn. Non-zero modes anchor the
+  // animation to spawnTimeSeconds (stamped at RtInstance creation) instead of the
+  // scene-global clock, so each instance plays from its own frame 0.
+  uint8_t spriteSheetPlaybackMode = 0;
+  float spawnTimeSeconds = 0.f;
 
   XXH64_hash_t associatedGeometryHash; // NOTE: This is used for the debug view
   uint32_t objectPickingValue = 0; // NOTE: a value to fill GBUFFER_BINDING_PRIMARY_OBJECT_PICKING_OUTPUT
@@ -1985,7 +1993,19 @@ struct MaterialData {
       break;
     }
   }
-  
+
+  uint8_t getSpriteSheetPlaybackMode() const {
+    switch (getType()) {
+    case MaterialDataType::Opaque:
+      return getOpaqueMaterialData().getSpriteSheetPlaybackMode();
+    case MaterialDataType::Translucent:
+      return getTranslucentMaterialData().getSpriteSheetPlaybackMode();
+    default:
+      // RayPortal runs its own smooth spritesheet path on the global clock.
+      return 0;
+    }
+  }
+
   void setSpriteSheetData(uint8_t spriteSheetRows, uint8_t spriteSheetCols, uint8_t spriteSheetFPS) {
     switch (getType()) {
     case MaterialDataType::Opaque:
