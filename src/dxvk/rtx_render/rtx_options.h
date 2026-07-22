@@ -237,6 +237,9 @@ namespace dxvk {
                "The mip level bias applied to textures on materials tagged as hair cards. Large negative values preserve thin strand detail at a distance.");
     RTX_OPTION("rtx", float, hairCardRoughnessScale, 1.0f,
                "An additional roughness multiplier applied only to materials tagged as hair cards.");
+    RTX_OPTION("rtx", fast_unordered_set, particleTexturesExclude, {},
+                  "Texture hashes removed from particle categorization even when present in rtx.particleTextures.\n"
+                  "Intended for runtime quality toggles driven by an external controller (e.g. a game-side proxy) via the Remix API: keeping the exclusion separate means the toggle never rewrites the user-authored rtx.particleTextures list (SetConfigVariable cannot read values back). Excluded draws render as regular geometry instead of taking the particle path.");
     RTX_OPTION("rtx", fast_unordered_set, beamTextures, {},
                   "Textures on draw calls that are already particles or emissively blended and have beam-like geometry.\n"
                   "Typically objects marked as particles or objects using emissive blending will be rendered with a special method which allows re-orientation of the billboard geometry assumed to make up the draw call in indirect rays (reflections for example).\n"
