@@ -361,9 +361,15 @@ namespace dxvk {
       value.f = options.getOption<float>(fullName.c_str(), value.f);
       break;
     case OptionType::HashSet:
+      // Assignment semantics, matching the scalar cases: parseFromStrings only
+      // inserts, so on a repeated read into the same layer value (e.g. the Remix
+      // API's SetConfigVariable) the set could otherwise only ever grow, and an
+      // empty value would be a no-op instead of clearing it.
+      value.hashSet->clearAll();
       value.hashSet->parseFromStrings(options.getOption<std::vector<std::string>>(fullName.c_str()));
       break;
     case OptionType::HashVector:
+      value.hashVector->clear();
       fillHashVector(options.getOption<std::vector<std::string>>(fullName.c_str()), *value.hashVector);
       break;
     case OptionType::VirtualKeys:
