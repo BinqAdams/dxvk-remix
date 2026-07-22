@@ -309,6 +309,7 @@ namespace {
           src.getSpriteSheetRows(),
           src.getSpriteSheetCols(),
           src.getSpriteSheetFPS(),
+          src.getSpriteSheetPlaybackMode(),
           src.getEnableThinFilm(),
           src.getAlphaIsThinFilmThickness(),
           src.getThinFilmThicknessConstant(),
@@ -353,6 +354,7 @@ namespace {
           src.getSpriteSheetRows(),
           src.getSpriteSheetCols(),
           src.getSpriteSheetFPS(),
+          src.getSpriteSheetPlaybackMode(),
           src.getEnableThinWalled(),
           src.getThinWallThickness(),
           src.getEnableDiffuseLayer(),
@@ -411,6 +413,7 @@ namespace {
           info.spriteSheetRow,
           info.spriteSheetCol,
           info.spriteSheetFps,
+          uint8_t(0), // spriteSheetPlaybackMode: not exposed via the C API
           tobool(extOpaque->thinFilmThickness_hasvalue),
           tobool(extOpaque->alphaIsThinFilmThickness),
           extOpaque->thinFilmThickness_hasvalue ? extOpaque->thinFilmThickness_value : 200.f, // default OpaqueMaterial::ThinFilmThicknessConstant
@@ -453,6 +456,7 @@ namespace {
           info.spriteSheetRow,
           info.spriteSheetCol,
           info.spriteSheetFps,
+          uint8_t(0), // spriteSheetPlaybackMode: not exposed via the C API
           tobool(extTranslucent->thinWallThickness_hasvalue),
           extTranslucent->thinWallThickness_hasvalue ? extTranslucent->thinWallThickness_value : 0.001f, // default TranslucentMaterial::ThinWallThickness
           tobool(extTranslucent->useDiffuseLayer),
