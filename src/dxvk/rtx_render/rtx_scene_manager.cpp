@@ -1013,6 +1013,16 @@ namespace dxvk {
     for (size_t i = 0; i < pReplacements->size(); i++) {
       auto&& replacement = (*pReplacements)[i];
       if (replacement.type == AssetReplacement::eGraph) {
+        // No root means no mesh prim has materialized yet, so setup() has not
+        // sized the prim table and a graph created now could not be linked
+        // into it. Skip this frame: when a mesh materializes (e.g. after a
+        // materialization-budget deferral) setup() sizes the table and the
+        // graph is created on that frame instead. Creating it early orphans
+        // the instance, and its destructor dereferences the freed
+        // ReplacementInstance at scene clear.
+        if (replacementInstance->root.getUntyped() == nullptr) {
+          break;
+        }
         bool hasGraph = (replacementInstance->prims.size() > i) &&
                         (replacementInstance->prims[i].getGraph() != nullptr);
         if (!hasGraph) {
