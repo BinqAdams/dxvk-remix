@@ -332,10 +332,29 @@ namespace dxvk {
       lock.unlock();
       
       VkResult status = m_lastError.load();
-      
-      if (status != VK_ERROR_DEVICE_LOST)
-        status = entry.submit.cmdList->synchronize();
-      
+
+      // NV-DXVK start: GPU crash diagnostics for silently wedged fences
+      // A wedged submission whose fence never signals without a device-loss
+      // report would park this thread forever and the GPU crash recorder
+      // would never fire. With rtx.gpuCrashFenceTimeoutSec > 0, bound the
+      // wait, dump the crash state once, and treat the submission as lost.
+      if (status != VK_ERROR_DEVICE_LOST) {
+        const int32_t timeoutSec = m_device->config().gpuCrashFenceTimeoutSec;
+
+        status = entry.submit.cmdList->synchronize(timeoutSec > 0
+          ? uint64_t(timeoutSec) * 1'000'000'000ull
+          : ~0ull);
+
+        if (status == VK_TIMEOUT) {
+          Logger::err(str::format("DxvkSubmissionQueue: Fence not signaled within ",
+            timeoutSec, "s (rtx.gpuCrashFenceTimeoutSec); dumping GPU crash state and treating the submission as device loss"));
+
+          onGpuCrash("fence timeout");
+          status = VK_ERROR_DEVICE_LOST;
+        }
+      }
+      // NV-DXVK end
+
       if (status != VK_SUCCESS) {
         Logger::err(str::format("DxvkSubmissionQueue: Failed to sync fence: ", status));
         m_lastError = status;

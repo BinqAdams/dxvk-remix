@@ -166,18 +166,31 @@ namespace dxvk {
   }
   
   
-  VkResult DxvkCommandList::synchronize() {
+  // NV-DXVK start: bounded fence wait for silent-hang diagnostics
+  VkResult DxvkCommandList::synchronize(uint64_t timeoutNs) {
     ScopedCpuProfileZone();
     VkResult status = VK_TIMEOUT;
-    
+
+    uint64_t waitedNs = 0;
+
     while (status == VK_TIMEOUT) {
+      constexpr uint64_t chunkNs = 1'000'000'000ull;
+
       status = m_vkd->vkWaitForFences(
         m_vkd->device(), 1, &m_fence, VK_FALSE,
-        1'000'000'000ull);
+        chunkNs);
+
+      if (status == VK_TIMEOUT) {
+        waitedNs += chunkNs;
+
+        if (waitedNs >= timeoutNs)
+          break;
+      }
     }
-    
+
     return status;
   }
+  // NV-DXVK end
   
   
   void DxvkCommandList::beginRecording() {
