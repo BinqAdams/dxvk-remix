@@ -250,12 +250,22 @@ namespace dxvk {
       }
     }
 
-    // Link to new ReplacementInstance
+    // Link to new ReplacementInstance. A link the prim table cannot hold must
+    // not be stored at all: the owner would keep a pointer that
+    // ReplacementInstance::clear() can never find and unlink, which dangles as
+    // soon as the ReplacementInstance is destroyed (observed as a crash in
+    // ~GraphInstance during SceneManager::clear).
+    if (replacementInstance != nullptr && replacementIndex >= replacementInstance->prims.size()) {
+      assert(false && "setReplacementInstance: replacementIndex out of range, dropping the link.");
+      m_replacementInstance = nullptr;
+      m_replacementIndex = ReplacementInstance::kInvalidReplacementIndex;
+      return;
+    }
+
     m_replacementInstance = replacementInstance;
     m_replacementIndex = replacementIndex;
 
-    if (m_replacementInstance != nullptr &&
-        m_replacementIndex < m_replacementInstance->prims.size()) {
+    if (m_replacementInstance != nullptr) {
       PrimInstance& targetSlot = m_replacementInstance->prims[m_replacementIndex];
       if (targetSlot.getUntyped() != nullptr && targetSlot.getUntyped() != owner) {
         targetSlot.setReplacementInstance(nullptr, ReplacementInstance::kInvalidReplacementIndex);
