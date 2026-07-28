@@ -119,12 +119,16 @@ namespace dxvk {
     
     /**
      * \brief Synchronizes command buffer execution
-     * 
+     *
      * Waits for the fence associated with
      * this command buffer to get signaled.
+     * \param [in] timeoutNs Total wait time after which to
+     *    give up with \c VK_TIMEOUT. Defaults to waiting forever.
      * \returns Synchronization status
      */
-    VkResult synchronize();
+    // NV-DXVK start: bounded fence wait for silent-hang diagnostics
+    VkResult synchronize(uint64_t timeoutNs = ~0ull);
+    // NV-DXVK end
     
     /**
      * \brief Stat counters
