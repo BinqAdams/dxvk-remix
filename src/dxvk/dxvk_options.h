@@ -55,6 +55,14 @@ namespace dxvk {
     bool enableGpuCrashStateBufferRetention;
     // NV-DXVK end
 
+    // NV-DXVK start: GPU crash diagnostics for silently wedged fences
+    /// Seconds a queue submission fence may stay unsignaled before the wait
+    /// is treated as a GPU hang: crash state is dumped (see
+    /// enableGpuCrashState) and the submission is reported as device loss.
+    /// 0 waits forever.
+    int32_t gpuCrashFenceTimeoutSec;
+    // NV-DXVK end
+
     // NV-DXVK start: early submit heuristics for memcpy work
     uint32_t memcpyKickoffThreshold;
     // NV-DXVK end
