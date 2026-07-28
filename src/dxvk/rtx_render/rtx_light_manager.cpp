@@ -106,6 +106,14 @@ namespace dxvk {
     m_fallbackLight.reset();
   }
 
+  void LightManager::removeFromLinearizedLights(const RtLight* light) {
+    auto it = std::find(m_linearizedLights.begin(), m_linearizedLights.end(), light);
+    if (it != m_linearizedLights.end()) {
+      *it = m_linearizedLights.back();
+      m_linearizedLights.pop_back();
+    }
+  }
+
   void LightManager::garbageCollectionInternal() {
     const uint32_t currentFrame = m_device->getCurrentFrameId();
     const uint32_t framesToKeep = RtxOptions::numFramesToKeepLights();
@@ -114,6 +122,7 @@ namespace dxvk {
     for (auto it = m_lights.begin(); it != m_lights.end();) {
       const RtLight& light = it->second;
       if (light.isMarkedForGarbageCollection()) {
+        removeFromLinearizedLights(&light);
         it = m_lights.erase(it);
         continue;
       }
@@ -123,10 +132,12 @@ namespace dxvk {
            frameLastTouched + RtxOptions::AntiCulling::Light::numFramesToExtendLightLifetime() <= currentFrame)) {
         if (light.isDynamic || suppressLightKeeping()) {
           if (light.getFrameLastTouched() < currentFrame) {
+            removeFromLinearizedLights(&light);
             it = m_lights.erase(it);
             continue;
           }
         } else if ((light.isStaticCount < framesToSleep) && (frameLastTouched + framesToKeep) <= currentFrame) {
+          removeFromLinearizedLights(&light);
           it = m_lights.erase(it);
           continue;
         }
@@ -137,6 +148,7 @@ namespace dxvk {
     for (auto it = m_externallyTrackedLights.begin(); it != m_externallyTrackedLights.end();) {
       RtLight& light = it->second;
       if (light.isMarkedForGarbageCollection()) {
+        removeFromLinearizedLights(&light);
         it = m_externallyTrackedLights.erase(it);
       } else {
         ++it;
@@ -188,6 +200,12 @@ namespace dxvk {
 
   void LightManager::dynamicLightMatching() {
     ScopedCpuProfileZone();
+    // The erases below free lights the debug UI may be iterating via
+    // m_linearizedLights; hold the UI mutex like the other erase paths.
+    // Released at the end of garbageCollection later this frame.
+    if (!m_lightDebugUILock.owns_lock()) {
+      m_lightDebugUILock.lock();
+    }
     // Try match up any stragglers now we have the full light list this frame.
     for (auto it = m_lights.cbegin(); it != m_lights.cend(); ) {
       const RtLight& light = it->second;
@@ -229,6 +247,7 @@ namespace dxvk {
         updateLight(light, dynamicLight);
 
         // Remove the previous frames version
+        removeFromLinearizedLights(&light);
         it = m_lights.erase(it);
       } else {
         ++it;
@@ -238,6 +257,13 @@ namespace dxvk {
 
   void LightManager::prepareSceneData(Rc<DxvkContext> ctx, CameraManager const& cameraManager) {
     ScopedCpuProfileZone();
+    // The m_linearizedLights rebuild and the fallback-light reset below mutate
+    // state the debug UI reads on the present thread; hold the UI mutex for the
+    // whole function (garbageCollection released it earlier this frame).
+    // Unlocked at the end of this function, which has no early returns.
+    if (!m_lightDebugUILock.owns_lock()) {
+      m_lightDebugUILock.lock();
+    }
     // Note: Early outing in this function (via returns) should be done carefully (or not at all ideally) as it may skip important
     // logic such as swapping the current/previous frame light buffer, updating light count information or allocating/updating the
     // light buffer which may cause issues in some cases (or rather already has, which is why this warning exists).
@@ -571,6 +597,8 @@ namespace dxvk {
     // Reset external active light list.
     m_externalActiveDomeLight = nullptr;
     m_externalActiveLightList.clear();
+
+    m_lightDebugUILock.unlock();
   }
 
   static const float kNotSimilar = -1.f;
@@ -752,6 +780,7 @@ namespace dxvk {
         updateLight(similarLight.value()->second, localLight);
 
         // Remove the similar light from the map
+        removeFromLinearizedLights(&similarLight.value()->second);
         m_lights.erase(similarLight.value());
       }
 
