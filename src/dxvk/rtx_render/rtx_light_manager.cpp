@@ -201,8 +201,12 @@ namespace dxvk {
   void LightManager::dynamicLightMatching() {
     ScopedCpuProfileZone();
     // The erases below free lights the debug UI may be iterating via
-    // m_linearizedLights; hold the UI mutex like the other erase paths.
-    // Released at the end of garbageCollection later this frame.
+    // m_linearizedLights, so hold the UI mutex. Must use the shared member with
+    // the owns_lock() guard rather than a lock_guard: addGameLight/
+    // addExternalLight acquire this same member and never release it, so the
+    // mutex is frequently already held on this thread by the time we arrive and
+    // a plain lock_guard would self-deadlock on the non-recursive mutex.
+    // Released by garbageCollection later this frame, as upstream does.
     if (!m_lightDebugUILock.owns_lock()) {
       m_lightDebugUILock.lock();
     }
@@ -257,13 +261,6 @@ namespace dxvk {
 
   void LightManager::prepareSceneData(Rc<DxvkContext> ctx, CameraManager const& cameraManager) {
     ScopedCpuProfileZone();
-    // The m_linearizedLights rebuild and the fallback-light reset below mutate
-    // state the debug UI reads on the present thread; hold the UI mutex for the
-    // whole function (garbageCollection released it earlier this frame).
-    // Unlocked at the end of this function, which has no early returns.
-    if (!m_lightDebugUILock.owns_lock()) {
-      m_lightDebugUILock.lock();
-    }
     // Note: Early outing in this function (via returns) should be done carefully (or not at all ideally) as it may skip important
     // logic such as swapping the current/previous frame light buffer, updating light count information or allocating/updating the
     // light buffer which may cause issues in some cases (or rather already has, which is why this warning exists).
@@ -372,6 +369,14 @@ namespace dxvk {
     // cost, but it might actually work out in favor of performance since unordered map traversal done redundantly
     // may be more expensive than simple vector traversal on the linearized list.
     
+    // Deliberately NOT locked here (matches upstream). m_lightDebugUILock is a
+    // SHARED unique_lock whose owns_lock() says nothing about WHICH thread owns
+    // it, so acquiring it across this function let a second thread (the dev-menu
+    // option-apply path) skip locking and then unlock a mutex it did not hold --
+    // std::system_error "operation not permitted", hit by toggling Enable
+    // Enhanced Meshes. The dangling-pointer bug this cache had is fixed at the
+    // source instead: every erase site calls removeFromLinearizedLights while
+    // holding the mutex.
     m_linearizedLights.clear();
 
     if (m_fallbackLight) {
@@ -597,8 +602,6 @@ namespace dxvk {
     // Reset external active light list.
     m_externalActiveDomeLight = nullptr;
     m_externalActiveLightList.clear();
-
-    m_lightDebugUILock.unlock();
   }
 
   static const float kNotSimilar = -1.f;
