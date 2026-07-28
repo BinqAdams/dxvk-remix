@@ -142,6 +142,11 @@ private:
   mutable std::mutex m_lightUIMutex;
   std::unique_lock<std::mutex> m_lightDebugUILock = std::unique_lock<std::mutex>(m_lightUIMutex, std::defer_lock);
 
+  // Every erase of a light must also drop its cached pointer from
+  // m_linearizedLights: the debug UI iterates that cache on the present thread
+  // (under m_lightUIMutex) until the next prepareSceneData rebuild.
+  void removeFromLinearizedLights(const RtLight* light);
+
   bool getActiveDomeLight(DomeLight& lightOut);
 
   void garbageCollectionInternal();
