@@ -258,6 +258,10 @@ namespace dxvk {
     // NV-DXVK start: GPU crash diagnostics
     std::atomic<bool>       m_gpuCrashHandled = { false };
     // NV-DXVK end
+
+    // NV-DXVK start: GPU crash diagnostics for silently wedged fences
+    std::atomic<bool>       m_fenceTimedOut = { false };
+    // NV-DXVK end
     
     std::atomic<bool>       m_stopped = { false };
     std::atomic<uint32_t>   m_pending = { 0u };
