@@ -39,6 +39,10 @@ namespace dxvk {
     enableGpuCrashStateBufferRetention = config.getOption<bool>("rtx.enableGpuCrashStateBufferRetention", false, "DXVK_ENABLE_GPU_CRASH_STATE_BUFFER_RETENTION");
     // NV-DXVK end
 
+    // NV-DXVK start: GPU crash diagnostics for silently wedged fences
+    gpuCrashFenceTimeoutSec = config.getOption<int32_t>("rtx.gpuCrashFenceTimeoutSec", 0);
+    // NV-DXVK end
+
     // NV-DXVK start: early submit heuristics for memcpy work
     memcpyKickoffThreshold = config.getOption<uint32_t>("dxvk.memcpyKickoffThreshold", 16 * 1024 * 1024);
     // NV-DXVK end
