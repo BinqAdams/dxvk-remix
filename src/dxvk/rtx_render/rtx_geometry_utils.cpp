@@ -324,8 +324,10 @@ namespace dxvk {
     // If we don't have a mappable vertex buffer then we need to do this on the GPU
     bool mustUseGPU = drawCallState.getGeometryData().positionBuffer.mapPtr() == nullptr;
 
-    // At some point, its more efficient to do these calculations on the GPU, this limit is somewhat arbitrary however, and might require better tuning...
-    const uint32_t kNumVerticesToProcessOnCPU = 256;
+    // At some point, its more efficient to do these calculations on the GPU. Runtime-tunable so
+    // the crossover can be measured per game rather than assumed: the CPU path costs two
+    // writeToBuffer records per vertex, which dominates on games made of small skinned submeshes.
+    const uint32_t kNumVerticesToProcessOnCPU = RtxOptions::skinningMaxCpuVertices();
 
     // Check we have appropriate CPU access. blendWeightBuffer is guaranteed
     // defined by the early-return above; blendIndicesBuffer is optional so
