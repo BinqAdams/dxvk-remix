@@ -135,10 +135,20 @@ namespace dxvk {
     info.stages = VK_PIPELINE_STAGE_HOST_BIT
                 | VK_PIPELINE_STAGE_TRANSFER_BIT;
 
-    info.usage  = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    // NV-DXVK start: allow the RTX GPU skinning path to read this buffer as an SSBO
+    // For non-DEFAULT pools (MAP_MODE_BUFFER) this staging buffer IS the buffer handed to
+    // RTX geometry processing, so it is what RtxGeometryUtils::dispatchSkinning binds as a
+    // storage buffer when a draw takes the GPU path (rtx_geometry_utils.cpp, BINDING_*_INPUT).
+    // Without STORAGE usage that bind is a valid-usage violation for any game whose skinned
+    // vertex buffers live in MANAGED pool. The real-buffer path already adds this bit for
+    // vertex buffers under SupportsSWVP (see CreateBuffer above).
+    info.usage  = VK_BUFFER_USAGE_TRANSFER_SRC_BIT
+                | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
 
     info.access = VK_ACCESS_HOST_WRITE_BIT
-                | VK_ACCESS_TRANSFER_READ_BIT;
+                | VK_ACCESS_TRANSFER_READ_BIT
+                | VK_ACCESS_SHADER_READ_BIT;
+    // NV-DXVK end
 
     if (!(m_desc.Usage & D3DUSAGE_WRITEONLY))
       info.access |= VK_ACCESS_HOST_READ_BIT;
