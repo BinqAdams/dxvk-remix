@@ -1097,6 +1097,8 @@ namespace dxvk {
     constants.primaryRayMaxInteractions = RtxOptions::primaryRayMaxInteractions();
     constants.psrRayMaxInteractions = RtxOptions::psrRayMaxInteractions();
     constants.secondaryRayMaxInteractions = RtxOptions::secondaryRayMaxInteractions();
+    constants.primaryRayMaxUnorderedInteractions = RtxOptions::primaryRayMaxUnorderedInteractions();
+    constants.secondaryRayMaxUnorderedInteractions = RtxOptions::secondaryRayMaxUnorderedInteractions();
 
     // Todo: Potentially move this to the volume manager in the future to be more organized.
     constants.volumeTemporalReuseMaxSampleCount = RtxGlobalVolumetrics::temporalReuseMaxSampleCount();

@@ -891,9 +891,9 @@ void resolveVertexUnorderedParticles<
 #endif
 
 #ifdef RAY_TRACING_PRIMARY_RAY
-  const uint kMaxUnorderedResolveSteps = 128;
+  const uint kMaxUnorderedResolveSteps = cb.primaryRayMaxUnorderedInteractions;
 #else
-  const uint kMaxUnorderedResolveSteps = 32;
+  const uint kMaxUnorderedResolveSteps = cb.secondaryRayMaxUnorderedInteractions;
 #endif
 
   for (uint step = 0; step < kMaxUnorderedResolveSteps && rayQuery.Proceed(); step++)
@@ -1242,12 +1242,12 @@ void resolveVertexUnordered<
   uint maxSortOrder = 0;
   // TODO[REMIX-3080] Unusued for now, will be needed for normal blending
   // f16mat3 worldToDecalTangent = f16mat3(0);
-  const uint kMaxUnorderedResolveSteps = 128;
+  const uint kMaxUnorderedResolveSteps = cb.primaryRayMaxUnorderedInteractions;
 #else
   float minDecalSample = -1.f;
   uint maxOpaqueSortOrder = 0;
   uint sampledSortOrder = 0;
-  const uint kMaxUnorderedResolveSteps = 32;
+  const uint kMaxUnorderedResolveSteps = cb.secondaryRayMaxUnorderedInteractions;
 #endif
 
   for (uint step=0 ; step<kMaxUnorderedResolveSteps && rayQuery.Proceed() ; step++)
