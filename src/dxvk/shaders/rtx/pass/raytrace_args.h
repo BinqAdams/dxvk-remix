@@ -431,6 +431,13 @@ struct RaytraceArgs {
   float wboitDepthWeightTuning;
   uint wboitEnabled;
 
+  // The maximum number of unordered resolve steps (particles and other unordered surfaces)
+  // for primary/PSR rays. Only meaningful while separate unordered approximations are enabled.
+  // Declared as uint rather than uint8_t to avoid disturbing the packing of the uint8_t groups above.
+  uint primaryRayMaxUnorderedInteractions;
+  // As above, for secondary (indirect) rays.
+  uint secondaryRayMaxUnorderedInteractions;
+
   // NOTE: Add structs to the top section of RaytraceArgs, not the bottom.
   // NOTE: bool does not work in debug builds, use uint instead.
 };

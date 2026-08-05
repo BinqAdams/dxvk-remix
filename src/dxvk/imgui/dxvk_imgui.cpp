@@ -3603,6 +3603,10 @@ namespace dxvk {
         RemixGui::DragInt("Max PSR Interactions", &RtxOptions::psrRayMaxInteractionsObject(), 1.0f, 1, 255, "%d", sliderFlags);
         RemixGui::DragInt("Max Secondary Interactions", &RtxOptions::secondaryRayMaxInteractionsObject(), 1.0f, 1, 255, "%d", sliderFlags);
         RemixGui::Checkbox("Separate Unordered Approximations", &RtxOptions::enableSeparateUnorderedApproximationsObject());
+        // Note: These bound the separate unordered resolve loop (particles), which the ordered
+        // Max * Interactions values above do not apply to while the checkbox above is enabled.
+        RemixGui::DragInt("Max Primary Unordered Interactions", &RtxOptions::primaryRayMaxUnorderedInteractionsObject(), 1.0f, 1, 255, "%d", sliderFlags);
+        RemixGui::DragInt("Max Secondary Unordered Interactions", &RtxOptions::secondaryRayMaxUnorderedInteractionsObject(), 1.0f, 1, 255, "%d", sliderFlags);
         RemixGui::Checkbox("Direct Translucent Shadows", &RtxOptions::enableDirectTranslucentShadowsObject());
         RemixGui::Checkbox("Direct Alpha Blended Shadows", &RtxOptions::enableDirectAlphaBlendShadowsObject());
         RemixGui::Checkbox("Indirect Translucent Shadows", &RtxOptions::enableIndirectTranslucentShadowsObject());
