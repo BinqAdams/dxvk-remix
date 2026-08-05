@@ -728,7 +728,8 @@ namespace dxvk {
     RTX_OPTION_ARGS("rtx", uint8_t, primaryRayMaxUnorderedInteractions, 128,
                "The maximum number of unordered resolver interactions to use for primary (initial G-Buffer) and PSR rays.\n"
                "This is the unordered counterpart to rtx.primaryRayMaxInteractions, and only has an effect while rtx.enableSeparateUnorderedApproximations is enabled (that flag is what routes particles into the separate unordered resolve loop instead of the ordered one).\n"
-               "It bounds how many particles (and other unordered surfaces) may be interacted with along a ray, which is the dominant cost when many alpha blended particles overlap and fill the screen. Lowering it caps that worst case, at the cost of dropping the furthest layers in very deep stacks.",
+               "It bounds how many particles (and other unordered surfaces) may be interacted with along a ray, which is the dominant cost when many alpha blended particles overlap and fill the screen.\n"
+               "Lowering it caps that worst case. When the limit is reached the traversal simply stops and any particles not yet visited contribute nothing; unlike the ordered loop, nothing is forced to become an opaque hit. Because unordered traversal returns candidates in implementation-defined order rather than sorted by distance, the particles dropped are arbitrary in depth rather than the furthest ones, so setting this too low tends to look like speckle or flicker in dense particle volumes rather than a clean fade.",
                args.minValue = static_cast<uint8_t>(1), args.maxValue = std::numeric_limits<uint8_t>::max());
     RTX_OPTION_ARGS("rtx", uint8_t, secondaryRayMaxUnorderedInteractions, 32,
                "The maximum number of unordered resolver interactions to use for secondary (indirect) rays.\n"
