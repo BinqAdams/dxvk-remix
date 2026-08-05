@@ -725,6 +725,16 @@ namespace dxvk {
                "This affects how many Decals, Ray Portals and potentially particles (if unordered approximations are not enabled) may be interacted with along a ray at the cost of performance for higher amounts of interactions.\n"
                "This value is recommended to be set lower than the primary/PSR max ray interactions as secondary ray interactions are less visually relevant relative to the performance cost of resolving them.",
                args.minValue = static_cast<uint8_t>(1), args.maxValue = std::numeric_limits<uint8_t>::max());
+    RTX_OPTION_ARGS("rtx", uint8_t, primaryRayMaxUnorderedInteractions, 128,
+               "The maximum number of unordered resolver interactions to use for primary (initial G-Buffer) and PSR rays.\n"
+               "This is the unordered counterpart to rtx.primaryRayMaxInteractions, and only has an effect while rtx.enableSeparateUnorderedApproximations is enabled (that flag is what routes particles into the separate unordered resolve loop instead of the ordered one).\n"
+               "It bounds how many particles (and other unordered surfaces) may be interacted with along a ray, which is the dominant cost when many alpha blended particles overlap and fill the screen. Lowering it caps that worst case, at the cost of dropping the furthest layers in very deep stacks.",
+               args.minValue = static_cast<uint8_t>(1), args.maxValue = std::numeric_limits<uint8_t>::max());
+    RTX_OPTION_ARGS("rtx", uint8_t, secondaryRayMaxUnorderedInteractions, 32,
+               "The maximum number of unordered resolver interactions to use for secondary (indirect) rays.\n"
+               "This is the unordered counterpart to rtx.secondaryRayMaxInteractions, and only has an effect while rtx.enableSeparateUnorderedApproximations is enabled.\n"
+               "This value is recommended to be set lower than the primary max unordered interactions as secondary ray interactions are less visually relevant relative to the performance cost of resolving them.",
+               args.minValue = static_cast<uint8_t>(1), args.maxValue = std::numeric_limits<uint8_t>::max());
     RTX_OPTION_ARGS("rtx", bool, enableSeparateUnorderedApproximations, true,
                "Use a separate loop during resolving for surfaces which can have lighting evaluated in an approximate unordered way on each path segment (such as particles).\n"
                "This improves performance typically in how particles or decals are rendered and should usually always be enabled.\n"
