@@ -234,6 +234,9 @@ namespace dxvk {
     RTX_OPTION("rtx", fast_unordered_set, particleTexturesExclude, {},
                   "Texture hashes removed from particle categorization even when present in rtx.particleTextures.\n"
                   "Intended for runtime quality toggles driven by an external controller (e.g. a game-side proxy) via the Remix API: keeping the exclusion separate means the toggle never rewrites the user-authored rtx.particleTextures list (SetConfigVariable cannot read values back). Excluded draws render as regular geometry instead of taking the particle path.");
+    RTX_OPTION("rtx", fast_unordered_set, cutoutTextures, {},
+                  "Texture hashes whose draws are tagged AlphaBlendToCutout: alpha blending is converted to an alpha test at rtx.forceCutoutAlpha.\n"
+                  "The category previously existed only via the per-instance Remix API flags; this exposes the same conversion by texture hash, matching the other categorization lists. Cutout draws terminate rays instead of accumulating in the unordered translucency pass and are opacity-micromap eligible, so this is a performance lever for dense blended effects rendered as geometry. Runtime-toggleable via the Remix API (same ownership pattern as rtx.particleTexturesExclude).");
     RTX_OPTION("rtx", fast_unordered_set, beamTextures, {},
                   "Textures on draw calls that are already particles or emissively blended and have beam-like geometry.\n"
                   "Typically objects marked as particles or objects using emissive blending will be rendered with a special method which allows re-orientation of the billboard geometry assumed to make up the draw call in indirect rays (reflections for example).\n"
