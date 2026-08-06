@@ -1899,9 +1899,32 @@ namespace dxvk {
     uint32_t transmittanceTextureIndex = kSurfaceMaterialInvalidTextureIndex;
     uint32_t emissiveColorTextureIndex = kSurfaceMaterialInvalidTextureIndex;
 
-    trackTexture(translucentMaterialData.getNormalTexture(), normalTextureIndex, hasTexcoords);
-    trackTexture(translucentMaterialData.getTransmittanceTexture(), transmittanceTextureIndex, hasTexcoords);
-    trackTexture(translucentMaterialData.getEmissiveColorTexture(), emissiveColorTextureIndex, hasTexcoords);
+    // NV-DXVK start: sampler feedback for translucent materials
+    // These tracks used to pass no stamp at all, so no translucent material ever had a
+    // feedback leader and every one of its textures stayed at its lowest requested mip
+    // (the GPU side never wrote feedback either; see translucentSurfaceMaterialInteractionCreate).
+    // Elect the leader from the first texture the material has, transmittance first since
+    // it is the colour-carrying texture, mirroring the opaque albedo-first election.
+    uint16_t samplerFeedbackStamp = SAMPLER_FEEDBACK_INVALID;
+    {
+      const TextureRef* const feedbackLeaderCandidates[] = {
+        &translucentMaterialData.getTransmittanceTexture(),
+        &translucentMaterialData.getNormalTexture(),
+        &translucentMaterialData.getEmissiveColorTexture(),
+      };
+
+      for (const TextureRef* const candidate : feedbackLeaderCandidates) {
+        if (candidate->getManagedTexture() != nullptr) {
+          samplerFeedbackStamp = candidate->getManagedTexture()->m_samplerFeedbackStamp;
+          break;
+        }
+      }
+    }
+
+    trackTexture(translucentMaterialData.getNormalTexture(), normalTextureIndex, hasTexcoords, true, samplerFeedbackStamp);
+    trackTexture(translucentMaterialData.getTransmittanceTexture(), transmittanceTextureIndex, hasTexcoords, true, samplerFeedbackStamp);
+    trackTexture(translucentMaterialData.getEmissiveColorTexture(), emissiveColorTextureIndex, hasTexcoords, true, samplerFeedbackStamp);
+    // NV-DXVK end
 
     return RtTranslucentSurfaceMaterial{
       normalTextureIndex,
@@ -1916,7 +1939,8 @@ namespace dxvk {
       translucentMaterialData.getEnableThinWalled(),
       translucentMaterialData.getThinWallThickness(),
       translucentMaterialData.getEnableDiffuseLayer(),
-      samplerIndex
+      samplerIndex,
+      samplerFeedbackStamp
     };
   }
 

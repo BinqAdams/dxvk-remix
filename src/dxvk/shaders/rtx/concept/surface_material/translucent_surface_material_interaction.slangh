@@ -51,6 +51,13 @@ TranslucentSurfaceMaterialInteraction translucentSurfaceMaterialInteractionCreat
 {
   TranslucentSurfaceMaterialInteraction translucentSurfaceMaterialInteraction;
 
+#if defined(RAY_TRACING_PRIMARY_RAY)
+  // Report the accessed mip for texture streaming, mirroring the opaque material
+  // interaction. Without this no translucent material ever wrote sampler feedback
+  // and all of its textures stayed at their lowest requested mip.
+  storeSamplerFeedback(translucentSurfaceMaterial.samplerFeedbackStamp, surfaceInteraction);
+#endif
+
   // Sample from each Translucent Surface Material texture
 
   vec4 normalSample;
