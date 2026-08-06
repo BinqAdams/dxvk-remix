@@ -58,6 +58,24 @@ namespace dxvk {
   // NV-DXVK start: DLFG integration
   bool DxvkContext::isDLFGEnabled() const {
     ScopedCpuProfileZone();
+    // Hold frame generation off until the boot-time pipeline-compile storm has
+    // drained once. The first DLSS-G evaluation with multiFrameCount > 2 makes
+    // the driver lazily build its multi-frame interpolation pipelines, and on
+    // driver 610.88 doing that concurrently with the state-cache/prewarm
+    // workers' vkCreateComputePipelines dies on a wild-index read inside
+    // nvoglv64.dll (3 identical dumps; the same conf booted clean the moment
+    // either side ran alone). The latch is sticky: after one observed idle
+    // moment FG behaves exactly as before, and later gameplay compiles never
+    // suspend it again. Composed here so dlfgInterpolatedFrameCount() and the
+    // presenter-mode choice all agree, riding the same enable/suspend
+    // transition path the menu suspend already exercises.
+    static std::atomic<bool> s_dlfgCompileQuiesced = { false };
+    if (!s_dlfgCompileQuiesced.load(std::memory_order_relaxed)) {
+      if (m_common->pipelineManager().isCompilingShaders()) {
+        return false;
+      }
+      s_dlfgCompileQuiesced.store(true, std::memory_order_relaxed);
+    }
     return m_common->metaNGXContext().supportsDLFG() && DxvkDLFG::enable() && !DxvkDLFG::suspendForMenu() && !m_common->metaDLFG().hasDLFGFailed();
   }
 
