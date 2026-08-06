@@ -467,6 +467,7 @@ namespace dxvk {
 
     setCategory(InstanceCategories::Particle, lookupHash(RtxOptions::particleTextures(), textureHash)
                                               && !lookupHash(RtxOptions::particleTexturesExclude(), textureHash));
+    setCategory(InstanceCategories::AlphaBlendToCutout, lookupHash(RtxOptions::cutoutTextures(), textureHash));
     setCategory(InstanceCategories::Beam, lookupHash(RtxOptions::beamTextures(), textureHash));
 
     setCategory(InstanceCategories::DecalStatic, lookupHash(RtxOptions::decalTextures(), textureHash));
