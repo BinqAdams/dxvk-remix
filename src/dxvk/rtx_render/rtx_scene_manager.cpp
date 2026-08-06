@@ -1720,15 +1720,44 @@ namespace dxvk {
 
       const auto& opaqueMaterialData = renderMaterialData.getOpaqueMaterialData();
 
+      // NV-DXVK start: elect a sampler feedback leader from any texture, not just albedo
+      // The stamp is the MATERIAL's identity in the feedback buffer: the shader writes one
+      // accessed-mip value per material (storeSamplerFeedback, opaque_surface_material_interaction.slangh),
+      // and every texture this material tracks is associated to that stamp as a follower for
+      // mip promotion. This used to be elected from the albedo texture alone, so a material with
+      // no albedo texture -- a pure emissive/transmissive overlay, for instance -- kept
+      // SAMPLER_FEEDBACK_INVALID, which makes storeSamplerFeedback early-out and write NO feedback
+      // at all. Every texture on such a material then had nothing driving promotion and stayed at
+      // its lowest requested mip forever. Falling back to whatever texture the material does have
+      // is safe: the reported mip is computed against a notional fixed 4096x4096 box precisely so
+      // it is stable across differently sized textures, so any of them is a valid leader.
+      // Albedo stays first so materials that have one keep their existing stamp exactly.
+      {
+        const TextureRef* const feedbackLeaderCandidates[] = {
+          &opaqueMaterialData.getAlbedoOpacityTexture(),
+          &opaqueMaterialData.getEmissiveColorTexture(),
+          &opaqueMaterialData.getNormalTexture(),
+          &opaqueMaterialData.getRoughnessTexture(),
+          &opaqueMaterialData.getMetallicTexture(),
+          &opaqueMaterialData.getHeightTexture(),
+          &opaqueMaterialData.getSecondaryTexture(),
+          &opaqueMaterialData.getTangentTexture(),
+        };
+
+        for (const TextureRef* const candidate : feedbackLeaderCandidates) {
+          if (candidate->getManagedTexture() != nullptr) {
+            samplerFeedbackStamp = candidate->getManagedTexture()->m_samplerFeedbackStamp;
+            break;
+          }
+        }
+      }
+      // NV-DXVK end
+
       if (RtxOptions::useWhiteMaterialMode()) {
         albedoOpacityConstant = kWhiteModeAlbedo;
         metallicConstant = 0.f;
         roughnessConstant = 1.f;
       } else {
-        if (opaqueMaterialData.getAlbedoOpacityTexture().getManagedTexture() != nullptr) {
-          samplerFeedbackStamp = opaqueMaterialData.getAlbedoOpacityTexture().getManagedTexture()->m_samplerFeedbackStamp;
-        }
-
         trackTexture(opaqueMaterialData.getAlbedoOpacityTexture(), albedoOpacityTextureIndex, hasTexcoords, true, samplerFeedbackStamp);
         trackTexture(opaqueMaterialData.getRoughnessTexture(), roughnessTextureIndex, hasTexcoords, true, samplerFeedbackStamp);
         trackTexture(opaqueMaterialData.getMetallicTexture(), metallicTextureIndex, hasTexcoords, true, samplerFeedbackStamp);
