@@ -701,7 +701,16 @@ namespace dxvk {
     // already entered DrawCallCache::get and re-bound a sibling-topology BlasEntry to its own data (kUpdateBVH),
     // the cached buffers no longer correspond to this draw -- fall back to dynamic so DrawCallCache::get's
     // "frameLastTouched skip" allocates a fresh BlasEntry and processSceneObject re-links the instance.
+    //
+    // That rebind hazard only exists when the geometry was actually re-uploaded this frame
+    // (frameLastUpdated): exact-match siblings (identical geometry/material/bone hashes at other
+    // transforms) share the BlasEntry without touching its geometry, and DrawCallCache::get's
+    // exactMatch short-circuits before the frameLastTouched skip, so they can never trigger the
+    // rebind. With rtx.preserveSharedBlasSiblings (default on) the veto therefore tests
+    // frameLastUpdated, letting every clean sibling of a prop group preserve; the frame's first
+    // toucher owns the per-BlasEntry writes (see preserveInstance / syncPreservedReplacementMeshesState).
     auto blasAlreadyTouchedByOtherDraw = [replacementInstance, currentFrameId]() -> bool {
+      const bool siblingsMayPreserve = RtxOptions::preserveSharedBlasSiblings();
       for (const auto& prim : replacementInstance->prims) {
         RtInstance* inst = prim.getInstance();
         if (inst == nullptr) {
@@ -711,7 +720,9 @@ namespace dxvk {
         if (pBlas == nullptr) {
           continue;
         }
-        if (pBlas->frameLastTouched == currentFrameId) {
+        const uint32_t blockingFrameId = siblingsMayPreserve ? pBlas->frameLastUpdated
+                                                             : pBlas->frameLastTouched;
+        if (blockingFrameId == currentFrameId) {
           return true;
         }
       }
@@ -1294,6 +1305,14 @@ namespace dxvk {
       if (pBlas == nullptr) {
         continue;
       }
+      // First toucher owns the input slot this frame (rtx.preserveSharedBlasSiblings):
+      // a sibling that already touched this BlasEntry wrote a this-frame input (dynamic
+      // path :input assignment or this function), so the CPU slices billboard/beam
+      // creation maps are already frame-fresh - matching the dynamic path's documented
+      // first-toucher contract in onSceneObjectUpdated.
+      if (pBlas->frameLastTouched == m_device->getCurrentFrameId()) {
+        continue;
+      }
       std::optional<DrawCallState> newDrawCallState =
           SceneManager::buildReplacementMeshDrawCallState(input, (*pReplacements)[i]);
       if (newDrawCallState.has_value()) {
@@ -1321,7 +1340,9 @@ namespace dxvk {
       syncPreservedReplacementMeshesState(input, pReplacements, replacementInstance);
     } else if (replacementInstance->prims.size() > 0) {
       RtInstance* inst = replacementInstance->prims[0].getInstance();
-      if (inst != nullptr && inst->getBlas() != nullptr) {
+      if (inst != nullptr && inst->getBlas() != nullptr &&
+          inst->getBlas()->frameLastTouched != m_device->getCurrentFrameId()) {
+        // First toucher owns the input slot; see syncPreservedReplacementMeshesState.
         inst->getBlas()->input = input;
       }
     }
