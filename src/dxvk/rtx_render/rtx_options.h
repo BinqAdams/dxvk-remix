@@ -1092,6 +1092,16 @@ namespace dxvk {
                 "frame's translation, rather than retranslating the draw call into raytrace-ready scene data.\n"
                 "When false, every submit uses full dynamic geometry and instance processing (drawReplacements / processDrawCallState).\n"
                 "Disable for debugging or compatibility when suspecting preserve-path regressions.");
+    RTX_OPTION_ARGS("rtx", bool, preserveSharedBlasSiblings, true,
+                "When true, a draw whose BlasEntry was already touched this frame by an exact-match sibling draw (identical\n"
+                "geometry, material and bone hashes at a different transform - e.g. repeated props like crates or pickups) may\n"
+                "still take the preserve path. The shared BlasEntry's per-frame state (input slot, buffer-cache registration,\n"
+                "previous-position clear) is owned by the frame's first toucher; later siblings skip those writes and reuse the\n"
+                "registered indices - the same first-toucher contract the dynamic path documents in onSceneObjectUpdated. The\n"
+                "preserve veto then only rejects draws whose BlasEntry geometry was actually re-uploaded this frame\n"
+                "(frameLastUpdated == current), which is the kUpdateBVH rebind hazard the veto's comment describes.\n"
+                "When false, the stricter legacy veto applies: only the first draw touching a BlasEntry each frame can preserve,\n"
+                "so every other member of an identical-prop group runs full dynamic translation every frame.");
     RTX_OPTION_ARGS("rtx", bool, enableInstanceDebuggingTools, false,
                     "NOTE: This will disable temporal correllation for instances, but allow the use of instance developer debug tools",
                     args.flags = RtxOptionFlags::NoSave | RtxOptionFlags::InvalidatesDrawcallTranslation);
