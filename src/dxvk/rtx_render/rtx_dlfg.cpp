@@ -457,7 +457,7 @@ namespace dxvk {
                         VK_IMAGE_ASPECT_COLOR_BIT,
                         VK_ACCESS_MEMORY_READ_BIT,
                         VK_ACCESS_TRANSFER_WRITE_BIT,
-                        m_swapchainImageLayouts[present.acquiredImageIndex],
+                        m_swapchainImageLayouts[renderedSwapchainImage.index],
                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
     barriers.record(m_device, *commandList, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
@@ -491,7 +491,7 @@ namespace dxvk {
                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                         VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
-    m_swapchainImageLayouts[present.acquiredImageIndex] = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    m_swapchainImageLayouts[renderedSwapchainImage.index] = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
     barriers.record(m_device, *commandList, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
 
@@ -501,14 +501,16 @@ namespace dxvk {
   bool DxvkDLFGPresenter::submitPresent(SwapchainImage& image, const PresentJob& present, uint64_t pacerSemaphoreWaitValue, VkSetPresentConfigNV* presentMetering) {
     const auto& reflex = m_ctx->getCommonObjects()->metaReflex();
 
-    if (!kSkipPacerSemaphoreWait && pacerSemaphoreWaitValue != kPacerDoNotWait) {
+    if (pacerSemaphoreWaitValue != kPacerDoNotWait) {
       assert(presentMetering == nullptr);
 
       // inject a command list that waits on the pacer semaphore and signals the present semaphore
       // this will cause the present below to wait on this timeline semaphore, which the pacer thread will signal from the CPU
       DxvkDLFGCommandList* commandList = m_presentPacingCommandLists.nextCmdList();
       commandList->endRecording();
-      commandList->addWaitSemaphore(m_dlfgPacerSemaphore->handle(), pacerSemaphoreWaitValue);
+      if (!kSkipPacerSemaphoreWait) {
+        commandList->addWaitSemaphore(m_dlfgPacerSemaphore->handle(), pacerSemaphoreWaitValue);
+      }
       commandList->addSignalSemaphore(image.sync.present);
       commandList->submit();
     }
@@ -579,7 +581,28 @@ namespace dxvk {
         const uint32_t neededSwapchainImages = present.frameInterpolation.interpolatedFrameCount + 1;
         if (neededSwapchainImages > m_info.imageCount) {
           m_lastPresentStatus = VK_ERROR_OUT_OF_DATE_KHR;
-          commandList->reset();
+
+          // The renderer has already queued a signal of backbufferWaitSemaphore
+          // for this job. Consume it and restore the backbuffer acquire signal
+          // before swapchain recreation replaces these binary semaphores.
+          commandList->addSignalSemaphore(backbufferSignalSemaphore);
+          const VkFence backbufferReleaseFence = commandList->getSignalFence();
+          commandList->endRecording();
+          commandList->submit();
+
+          // Ensure the queue no longer references either backbuffer semaphore
+          // before the present job is released and recreation can destroy them.
+          VkResult backbufferReleaseStatus = VK_TIMEOUT;
+          while (backbufferReleaseStatus == VK_TIMEOUT) {
+            backbufferReleaseStatus = m_device->vkd()->vkWaitForFences(
+              m_device->handle(), 1, &backbufferReleaseFence, VK_FALSE, 1'000'000'000ull);
+          }
+
+          if (backbufferReleaseStatus != VK_SUCCESS) {
+            m_lastPresentStatus = backbufferReleaseStatus;
+          }
+
+          commandList = nullptr;
           continue;
         }
 
@@ -636,12 +659,15 @@ namespace dxvk {
           barriers.record(m_device, *commandList, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
         }
 
+        bool interpolatedImageAcquireFailed = false;
         for (uint32_t fgInterpolateIndex = 0; fgInterpolateIndex < present.frameInterpolation.interpolatedFrameCount; fgInterpolateIndex++) {
           SwapchainImage& swapchainImage = interpolatedSwapchainImages[fgInterpolateIndex];
           if (!swapchainAcquire(swapchainImage)) {
-            // got an error, bail until it's handled
+            // Stop processing this present job before any unacquired swapchain
+            // image or its uninitialized synchronization handles can be used.
             commandList->reset();
-            continue;
+            interpolatedImageAcquireFailed = true;
+            break;
           }
 
           interpolateFrame(commandList, swapchainImage, present, fgInterpolateIndex);
@@ -654,9 +680,9 @@ namespace dxvk {
           }
         }
 
-        // Skip post-interpolate barriers and commandlist submission if swapchain acquire failed above,
-        // since the command list was reset and is no longer in a recording state. Bail until it's handled.
-        if (m_lastPresentStatus == VK_SUCCESS) {
+        // Skip post-interpolate barriers and command list submission if a
+        // swapchain acquisition failed and reset the command list above.
+        if (!interpolatedImageAcquireFailed) {
           {
             // Note: the profile zone must end before endRecording()/submit() below, since
             // its destructor records a vkCmdWriteTimestamp into the command buffer when
@@ -691,10 +717,16 @@ namespace dxvk {
 
         reflex.endOutOfBandRendering(present.present.cachedReflexFrameId);
 
+        if (interpolatedImageAcquireFailed) {
+          // Continue the outer present loop; no acquired images from this job
+          // may be presented after its interpolation command list was reset.
+          continue;
+        }
+
         // try to use present metering if enabled, fall back to CPU metering if it fails
-        bool usePresentMetering = DxvkDLFG::enablePresentMetering();
+        bool usePresentMetering = DxvkDLFG::enablePresentMetering() && dlfg.supportsPresentMetering();
         uint64_t pacerSemaphoreValue = kPacerDoNotWait;
-        VkSetPresentConfigNV presentMetering;
+        VkSetPresentConfigNV presentMetering = { };
 
         if (usePresentMetering) {
           presentMetering.sType = VK_STRUCTURE_TYPE_SET_PRESENT_CONFIG_NV;
@@ -716,6 +748,17 @@ namespace dxvk {
           if (presentMetering.presentConfigFeedback != 0) {
             usePresentMetering = false;
           }
+        }
+
+        if (usePresentMetering && present.frameInterpolation.interpolatedFrameCount > 1) {
+          // Flip metering controls display timing, but every present still needs
+          // a distinct semaphore signal after its generated image is ready.
+          DxvkDLFGCommandList* readyCommandList = m_presentPacingCommandLists.nextCmdList();
+          readyCommandList->endRecording();
+          for (uint32_t fgInterpolateIndex = 1; fgInterpolateIndex < present.frameInterpolation.interpolatedFrameCount; fgInterpolateIndex++) {
+            readyCommandList->addSignalSemaphore(interpolatedSwapchainImages[fgInterpolateIndex].sync.present);
+          }
+          readyCommandList->submit();
         }
 
         if (!usePresentMetering) {
@@ -758,8 +801,10 @@ namespace dxvk {
         commandList = m_dlfgCommandLists.nextCmdList();
         blitRenderedFrame(commandList, renderedSwapchainImage, present, true);
 
-        commandList->addWaitSemaphore(renderedSwapchainImage.sync.acquire);
         commandList->addSignalSemaphore(backbufferSignalSemaphore);
+        if (usePresentMetering) {
+          commandList->addSignalSemaphore(renderedSwapchainImage.sync.present);
+        }
         commandList->endRecording();
         commandList->submit();
         commandList = nullptr;
@@ -787,8 +832,8 @@ namespace dxvk {
 
         blitRenderedFrame(commandList, renderedSwapchainImage, present, false);
 
-        commandList->addWaitSemaphore(renderedSwapchainImage.sync.acquire);
         commandList->addSignalSemaphore(backbufferSignalSemaphore);
+        commandList->addSignalSemaphore(renderedSwapchainImage.sync.present);
         commandList->endRecording();
         commandList->submit();
         commandList = nullptr;
@@ -1312,7 +1357,8 @@ namespace dxvk {
   }
 
   bool DxvkDLFG::supportsPresentMetering() const {
-    return m_device->extensions().nvPresentMetering;
+    return m_device->extensions().nvPresentMetering
+        && m_device->features().nvPresentMetering.presentMetering;
   }
 
   uint32_t DxvkDLFG::getMaxSupportedInterpolatedFrameCount() {
