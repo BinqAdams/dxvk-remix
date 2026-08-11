@@ -767,6 +767,68 @@ namespace dxvk {
         !terrainCascadesJustChanged &&
         cachedTexturesValidForPreserve;
 
+    // Diagnostic: when a replacement that was submitted last frame (a continuous
+    // draw, so this is a genuine preserve->dynamic transition rather than a
+    // first-appearance) drops off the preserve path, log which gate condition(s)
+    // failed plus the asset-rule hash. Named-condition re-evaluation only runs
+    // when logGeometryLifecycle is on AND the draw actually dropped, so the hot
+    // path is untouched. Used to attribute the zone-boundary level-geo flash.
+    if (RtxOptions::logGeometryLifecycle() && !usePreservePath &&
+        replacementInstance->frameLastSeen == currentFrameId - 1) {
+      std::string reasons;
+      auto add = [&](bool failed, const char* name) {
+        if (failed) { if (!reasons.empty()) reasons += ','; reasons += name; }
+      };
+      add(!RtxOptions::enablePreservePath(), "pathDisabled");
+      if (!replacementInstance->dirtyFlags.isClear()) {
+        // Decode which lookup-drift bit(s) set the RI dirty, and for the Other
+        // catch-all, name the actual churning identity input by comparing this
+        // submission to the values stored on the RI last frame.
+        std::string bits;
+        auto addbit = [&](ReplacementInstance::DirtyFlag f, const char* n) {
+          if (replacementInstance->dirtyFlags.test(f)) { if(!bits.empty()) bits+='+'; bits+=n; }
+        };
+        addbit(ReplacementInstance::DirtyFlag::Transform, "Transform");
+        addbit(ReplacementInstance::DirtyFlag::VertexPosHash, "VertexPos");
+        addbit(ReplacementInstance::DirtyFlag::MaterialHash, "Material");
+        addbit(ReplacementInstance::DirtyFlag::Other, "Other");
+        addbit(ReplacementInstance::DirtyFlag::ParticleSystem, "ParticleSystem");
+        std::string churn;
+        auto addchurn = [&](bool c, const char* n) { if(c){ if(!churn.empty()) churn+=','; churn+=n; } };
+        addchurn(replacementInstance->categoryFlags != input.getCategoryFlags().raw(), "category");
+        addchurn(memcmp(&replacementInstance->textureTransform, &input.getTransformData().textureTransform, sizeof(Matrix4)) != 0, "textureTransform");
+        addchurn(replacementInstance->texgenMode != input.getTransformData().texgenMode, "texgen");
+        reasons += "dirtyFlags[" + bits + "]{" + churn + "}";
+      }
+      add(replacementInstance->pendingMaterialization, "pendingMaterialization");
+      add(RtxOptionManager::isDrawcallTranslationInvalid(), "drawcallTranslationInvalid");
+      add(secondSubmissionThisFrame, "secondSubmission");
+      add(input.getCategoryFlags().test(InstanceCategories::ParticleEmitter), "particleEmitter");
+      add(RtxOptions::shouldConvertToLight(input.getMaterialData().getHash()), "convertToLight");
+      add(blasAlreadyTouchedByOtherDraw(), "blasTouchedByOtherDraw");
+      add(overrideMaterialHasParticles, "overrideParticles");
+      add(!activeReplacementsMatch, "activeReplacementsMismatch");
+      add(!legacyMaterialIdentityHashMatch, "legacyMaterialIdentityDrift");
+      add(terrainCascadesJustChanged, "terrainCascades");
+      add(!cachedTexturesValidForPreserve, "textureCacheGenBump");
+      // For the two dominant recompute-with-identical-input reasons, log the
+      // actual old->new values plus the RI pointer, so we can tell a two-value
+      // alternation (co-located passes aliasing one RI) from a genuine per-frame
+      // change, and whether the same asset resolves to a different RI each frame.
+      std::string detail;
+      if (!legacyMaterialIdentityHashMatch) {
+        detail += str::format(" matOld=", std::hex, replacementInstance->legacyMaterialIdentityHash,
+                              " matNew=", legacyMaterialIdentityHash, std::dec);
+      }
+      if (!activeReplacementsMatch) {
+        detail += str::format(" replOld=", replacementInstance->activeReplacements,
+                              " replNew=", (const void*)pReplacements);
+      }
+      Logger::info(str::format("[GeomLife] ", currentFrameId, " PRESERVE-DROP hash=",
+          std::hex, input.getHash(RtxOptions::geometryAssetHashRule()), std::dec,
+          " ri=", (const void*)replacementInstance,
+          " reasons=", reasons, detail));
+    }
 
     if (usePreservePath) {
       preserveReplacementInstance(ctx, input, pReplacements, replacementInstance);
