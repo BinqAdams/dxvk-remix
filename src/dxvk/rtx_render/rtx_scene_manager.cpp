@@ -254,6 +254,10 @@ namespace dxvk {
       m_device->waitForIdle();
     }
 
+    // unregister all geometry buffers and verify that nothing has leaked.
+    // (this function could be debug only, but this isn't a hot path.) 
+    verifyAndReleaseBufferCache();
+
     // We still need to clear caches even if the scene wasn't rendered
     m_bufferCache.clear();
     m_preCreationSurfaceMaterialMap.clear();
@@ -332,12 +336,7 @@ namespace dxvk {
       for (auto iter = entries.begin(); iter != entries.end(); ) {
         if (iter->second.frameLastTouched < oldestFrame &&
             iter->second.getLinkedInstances().empty()) {
-          if (RtxOptions::logGeometryLifecycle()) {
-            Logger::info(str::format("[GeomLife] ", m_device->getCurrentFrameId(),
-              " BLASENTRY-EVICT hash=0x", std::hex, iter->first,
-              " assetHash=0x", iter->second.input.getHash(RtxOptions::geometryAssetHashRule()), std::dec,
-              " lastTouched=", iter->second.frameLastTouched));
-          }
+          unregisterGeometryBuffers(iter->second.modifiedGeometryData);
           iter = entries.erase(iter);
         } else {
           ++iter;
@@ -366,10 +365,19 @@ namespace dxvk {
   }
 
   template<bool isNew>
-  SceneManager::ObjectCacheState SceneManager::processGeometryInfo(Rc<DxvkContext> ctx, const DrawCallState& drawCallState, RaytraceGeometry& inOutGeometry) {
+  SceneManager::ObjectCacheState SceneManager::processGeometryInfo(Rc<DxvkContext> ctx, const DrawCallState& drawCallState, BlasEntry* pBlas) {
     ScopedCpuProfileZone();
     ObjectCacheState result = ObjectCacheState::KBuildBVH;
     const RasterGeometry& input = drawCallState.getGeometryData();
+    RaytraceGeometry& inOutGeometry = pBlas->modifiedGeometryData;
+
+    // Need to call updateBufferCache() on *every* exit path.  This needs to run after changes
+    // have been made, but before we actually exit the function.
+    struct BufferCacheGuard {
+      SceneManager& sceneManager;
+      BlasEntry* pBlas;
+      ~BufferCacheGuard() { sceneManager.updateBufferCache(pBlas); }
+    } bufferCacheGuard { *this, pBlas };
 
     // Determine the optimal object state for this geometry
     if (!isNew) {
@@ -525,9 +533,6 @@ namespace dxvk {
       output.color0Buffer = RaytraceBuffer(slice, colorBuffer.offsetFromSlice(), colorBuffer.stride(), colorBuffer.vertexFormat());
     }
 
-    // Update buffers in the cache
-    updateBufferCache(output);
-
     return result;
   }
 
@@ -553,7 +558,6 @@ namespace dxvk {
     m_materializedTrianglesThisFrame = 0;
     m_previousFrameSceneAvailable = raytracedThisFrame && RtxOptions::enablePreviousTLAS();
 
-    m_bufferCache.clear();
     if (raytracedThisFrame) {
       std::lock_guard lock { m_drawCallMeta.mutex };
       const uint8_t curTick = m_drawCallMeta.ticker;
@@ -1138,42 +1142,71 @@ namespace dxvk {
     }
   }
 
-  void SceneManager::updateBufferCache(RaytraceGeometry& newGeoData) {
+  void SceneManager::updateBufferCache(BlasEntry* pBlas) {
     ScopedCpuProfileZone();
-    if (newGeoData.indexBuffer.defined()) {
-      newGeoData.indexBufferIndex = m_bufferCache.track(newGeoData.indexBuffer);
-    } else {
-      newGeoData.indexBufferIndex = kSurfaceInvalidBufferIndex;
-    }
 
-    if (newGeoData.normalBuffer.defined()) {
-      newGeoData.normalBufferIndex = m_bufferCache.track(newGeoData.normalBuffer);
-    } else {
-      newGeoData.normalBufferIndex = kSurfaceInvalidBufferIndex;
-    }
+    // Acquire or re-acquire a stable buffer-cache slot. If the buffer matches the
+    // currently registered slot, this is a no-op (fast path for static geometry).
+    // If any slot changed, propagate updated indices to all currently-linked instances
+    // immediately so they are never stale.
+    bool changed = false;
+    auto updateSlot = [&](const RaytraceBuffer& buf, uint32_t& idx) {
+      if (!buf.defined()) {
+        if (idx != kSurfaceInvalidBufferIndex) {
+          m_bufferCache.release(idx);
+          idx = kSurfaceInvalidBufferIndex;
+          changed = true;
+        }
+        return;
+      }
+      if (m_bufferCache.isRegistered(idx, buf)) {
+        return;
+      }
+      if (idx != kSurfaceInvalidBufferIndex) {
+        m_bufferCache.release(idx);
+      }
+      idx = m_bufferCache.acquire(buf);
+      changed = true;
+    };
 
-    if (newGeoData.color0Buffer.defined()) {
-      newGeoData.color0BufferIndex = m_bufferCache.track(newGeoData.color0Buffer);
-    } else {
-      newGeoData.color0BufferIndex = kSurfaceInvalidBufferIndex;
-    }
+    RaytraceGeometry& geo = pBlas->modifiedGeometryData;
+    updateSlot(geo.indexBuffer,            geo.indexBufferIndex);
+    updateSlot(geo.normalBuffer,           geo.normalBufferIndex);
+    updateSlot(geo.color0Buffer,           geo.color0BufferIndex);
+    updateSlot(geo.texcoordBuffer,         geo.texcoordBufferIndex);
+    updateSlot(geo.positionBuffer,         geo.positionBufferIndex);
+    updateSlot(geo.previousPositionBuffer, geo.previousPositionBufferIndex);
 
-    if (newGeoData.texcoordBuffer.defined()) {
-      newGeoData.texcoordBufferIndex = m_bufferCache.track(newGeoData.texcoordBuffer);
-    } else {
-      newGeoData.texcoordBufferIndex = kSurfaceInvalidBufferIndex;
+    if (changed) {
+      for (RtInstance* inst : pBlas->getLinkedInstances()) {
+        inst->syncBufferIndicesFromBlas();
+      }
     }
+  }
 
-    if (newGeoData.positionBuffer.defined()) {
-      newGeoData.positionBufferIndex = m_bufferCache.track(newGeoData.positionBuffer);
-    } else {
-      newGeoData.positionBufferIndex = kSurfaceInvalidBufferIndex;
+  void SceneManager::unregisterGeometryBuffers(RaytraceGeometry& geo) {
+    auto releaseSlot = [&](uint32_t& idx) {
+      if (idx != kSurfaceInvalidBufferIndex) {
+        m_bufferCache.release(idx);
+        idx = kSurfaceInvalidBufferIndex;
+      }
+    };
+    releaseSlot(geo.indexBufferIndex);
+    releaseSlot(geo.normalBufferIndex);
+    releaseSlot(geo.color0BufferIndex);
+    releaseSlot(geo.texcoordBufferIndex);
+    releaseSlot(geo.positionBufferIndex);
+    releaseSlot(geo.previousPositionBufferIndex);
+  }
+
+  void SceneManager::verifyAndReleaseBufferCache() {
+    for (auto& [hash, entry] : m_drawCallCache.getEntries()) {
+      unregisterGeometryBuffers(entry.modifiedGeometryData);
     }
-
-    if (newGeoData.previousPositionBuffer.defined()) {
-      newGeoData.previousPositionBufferIndex = m_bufferCache.track(newGeoData.previousPositionBuffer);
-    } else {
-      newGeoData.previousPositionBufferIndex = kSurfaceInvalidBufferIndex;
+    if (m_bufferCache.getActiveCount() != 0) {
+      ONCE(Logger::err(str::format("RetainedBufferTable: ", m_bufferCache.getActiveCount(),
+                                   " buffer slot(s) still registered after scene clear — registration/release imbalance")));
+      ONCE(assert(false && "RetainedBufferTable: detected possible buffer leak."));
     }
   }
 
@@ -1189,21 +1222,6 @@ namespace dxvk {
     instance.setFrameLastUpdated(m_device->getCurrentFrameId());
 
     // Preserve path: keep RtInstance surface/material/transform/mask state from the last dynamic update.
-    // Only refresh per-frame buffer-cache indices (and BLAS touch / texture lifetime) so GPU addresses stay valid.
-
-    // A sibling draw sharing this BlasEntry may already have performed the per-frame shared
-    // writes this frame (rtx.preserveSharedBlasSiblings): the first toucher owns the
-    // previous-position clear and the buffer-cache registration; later siblings skip them and
-    // only run per-instance work (surface fixups, processInstanceBuffers, billboards).
-    const bool blasFirstTouchThisFrame = pBlas->frameLastTouched != m_device->getCurrentFrameId();
-
-    // Preserve / anti-culled draw: positions are unchanged this frame, so there is no meaningful
-    // previousPosition data. Clear it to match processGeometryInfo's kUpdateInstance behavior
-    // (it always clears, then only kUpdateBVH re-points it at historyBuffer[1]); without this,
-    // a stale buffer left over from the last kUpdateBVH frame would feed into motion vectors.
-    if (blasFirstTouchThisFrame) {
-      pBlas->modifiedGeometryData.previousPositionBuffer = RaytraceBuffer();
-    }
 
     // The last dynamic update may have left prevObjectToWorld != objectToWorld and
     // isStatic == false (e.g. after a transform-changing move()). Re-sync on the first
@@ -1216,14 +1234,14 @@ namespace dxvk {
     // The last dynamic update may have left hasMaterialChanged == true.
     instance.surface.hasMaterialChanged = false;
 
-    // Buffer indices are per-frame (m_bufferCache is cleared in onFrameEnd),
-    // so re-register geometry buffers and copy fresh indices to the surface.
-    // First toucher registers; siblings reuse the indices it wrote (BufferRefTable::track
-    // only dedupes against back(), so skipping also avoids duplicate cache growth).
-    if (blasFirstTouchThisFrame) {
-      updateBufferCache(pBlas->modifiedGeometryData);
+    // On the first preserve encounter per frame, release the previousPositionBuffer slot
+    // so instances don't carry a stale previous-position index forward. Subsequent preserve
+    // draws on the same BLAS this frame skip this (frameLastTouched already == current).
+    if (pBlas->frameLastTouched != m_device->getCurrentFrameId()
+        && pBlas->modifiedGeometryData.previousPositionBuffer.defined()) {
+      pBlas->modifiedGeometryData.previousPositionBuffer = RaytraceBuffer();
+      updateBufferCache(pBlas);
     }
-    m_instanceManager.processInstanceBuffers(*pBlas, instance);
 
     pBlas->frameLastTouched = m_device->getCurrentFrameId();
 
@@ -1341,7 +1359,7 @@ namespace dxvk {
 
   SceneManager::ObjectCacheState SceneManager::onSceneObjectAdded(Rc<DxvkContext> ctx, const DrawCallState& drawCallState, BlasEntry* pBlas) {
     // This is a new object.
-    ObjectCacheState result = processGeometryInfo<true>(ctx, drawCallState, pBlas->modifiedGeometryData);
+    ObjectCacheState result = processGeometryInfo<true>(ctx, drawCallState, pBlas);
     
     assert(result == ObjectCacheState::KBuildBVH);
 
@@ -1370,7 +1388,7 @@ namespace dxvk {
     }
 
     // TODO: If mesh is static, no need to do any of the below, just use the existing modifiedGeometryData and set result to kInstanceUpdate.
-    ObjectCacheState result = processGeometryInfo<false>(ctx, drawCallState, pBlas->modifiedGeometryData);
+    ObjectCacheState result = processGeometryInfo<false>(ctx, drawCallState, pBlas);
 
     // We dont expect to hit the rebuild path here - since this would indicate an index buffer or other topological change, and that *should* trigger a new scene object (since the hash would change)
     assert(result != ObjectCacheState::KBuildBVH);
@@ -1529,20 +1547,26 @@ namespace dxvk {
   }
 
   // Helper to populate the texture cache with this resource (and patch sampler if required for texture)
-  void SceneManager::trackTexture(const TextureRef &inputTexture,
+  // If 'inout_samplerFeedbackStamp' is non-null and still INVALID, it is seeded from the
+  // first present texture; that stamp is then reused so subsequent textures in the same
+  // material are grouped together for sampler-feedback streaming.
+  void SceneManager::trackTexture(const TextureRef& inputTexture,
                                   uint32_t& textureIndex,
                                   bool hasTexcoords,
                                   bool async,
-                                  uint16_t samplerFeedbackStamp,
-                                  bool pinFullMips) {
-    // If no texcoords, no need to bind the texture
+                                  uint16_t* inout_samplerFeedbackStamp) {
     if (!hasTexcoords) {
       ONCE(Logger::info(str::format("[RTX-Compatibility-Info] Trying to bind a texture to a mesh without UVs.  Was this intended?")));
       return;
     }
 
+    if (inout_samplerFeedbackStamp != nullptr && *inout_samplerFeedbackStamp == SAMPLER_FEEDBACK_INVALID && inputTexture.getManagedTexture() != nullptr) {
+      *inout_samplerFeedbackStamp = inputTexture.getManagedTexture()->m_samplerFeedbackStamp;
+    }
+
+    const uint16_t stamp = inout_samplerFeedbackStamp != nullptr ? *inout_samplerFeedbackStamp : SAMPLER_FEEDBACK_INVALID;
     auto& textureManager = m_device->getCommon()->getTextureManager();
-    textureManager.addTexture(inputTexture, samplerFeedbackStamp, async, pinFullMips, textureIndex);
+    textureManager.addTexture(inputTexture, stamp, async, textureIndex);
   }
 
   RtInstance* SceneManager::processDrawCallState(const Rc<DxvkContext>& ctx, const DrawCallState& drawCallState, const MaterialData& renderMaterialData, ReplacementInstance& replacementInstance, RtInstance* existingInstance, const RtxParticleSystemDesc* pParticleSystemDesc) {
@@ -1552,6 +1576,11 @@ namespace dxvk {
 
     if (renderMaterialData.getIgnored()) {
       return nullptr;
+    }
+
+    // Clear the preserve-path flag at the start of a dynamic update.
+    if (existingInstance != nullptr) {
+      existingInstance->surface.isPreservePath = false;
     }
 
     ObjectCacheState result = ObjectCacheState::kInvalid;
@@ -1853,10 +1882,10 @@ namespace dxvk {
         metallicConstant = 0.f;
         roughnessConstant = 1.f;
       } else {
-        trackTexture(opaqueMaterialData.getAlbedoOpacityTexture(), albedoOpacityTextureIndex, hasTexcoords, true, samplerFeedbackStamp);
-        trackTexture(opaqueMaterialData.getRoughnessTexture(), roughnessTextureIndex, hasTexcoords, true, samplerFeedbackStamp);
-        trackTexture(opaqueMaterialData.getMetallicTexture(), metallicTextureIndex, hasTexcoords, true, samplerFeedbackStamp);
-        trackTexture(opaqueMaterialData.getSecondaryTexture(), secondaryTextureIndex, hasTexcoords, true, samplerFeedbackStamp);
+        trackTexture(opaqueMaterialData.getAlbedoOpacityTexture(), albedoOpacityTextureIndex, hasTexcoords, true, &samplerFeedbackStamp);
+        trackTexture(opaqueMaterialData.getRoughnessTexture(), roughnessTextureIndex, hasTexcoords, true, &samplerFeedbackStamp);
+        trackTexture(opaqueMaterialData.getMetallicTexture(), metallicTextureIndex, hasTexcoords, true, &samplerFeedbackStamp);
+        trackTexture(opaqueMaterialData.getSecondaryTexture(), secondaryTextureIndex, hasTexcoords, true, &samplerFeedbackStamp);
 
         albedoOpacityConstant.xyz() = opaqueMaterialData.getAlbedoConstant();
         albedoOpacityConstant.w = opaqueMaterialData.getOpacityConstant();
@@ -1864,10 +1893,10 @@ namespace dxvk {
         roughnessConstant = opaqueMaterialData.getRoughnessConstant();
       }
 
-      trackTexture(opaqueMaterialData.getNormalTexture(), normalTextureIndex, hasTexcoords, true, samplerFeedbackStamp);
-      trackTexture(opaqueMaterialData.getTangentTexture(), tangentTextureIndex, hasTexcoords, true, samplerFeedbackStamp);
-      trackTexture(opaqueMaterialData.getHeightTexture(), heightTextureIndex, hasTexcoords, true, samplerFeedbackStamp);
-      trackTexture(opaqueMaterialData.getEmissiveColorTexture(), emissiveColorTextureIndex, hasTexcoords, true, samplerFeedbackStamp);
+      trackTexture(opaqueMaterialData.getNormalTexture(), normalTextureIndex, hasTexcoords, true, &samplerFeedbackStamp);
+      trackTexture(opaqueMaterialData.getTangentTexture(), tangentTextureIndex, hasTexcoords, true, &samplerFeedbackStamp);
+      trackTexture(opaqueMaterialData.getHeightTexture(), heightTextureIndex, hasTexcoords, true, &samplerFeedbackStamp);
+      trackTexture(opaqueMaterialData.getEmissiveColorTexture(), emissiveColorTextureIndex, hasTexcoords, true, &samplerFeedbackStamp);
 
       emissiveIntensity = opaqueMaterialData.getEmissiveIntensity() * RtxOptions::emissiveIntensity();
       emissiveColorConstant = opaqueMaterialData.getEmissiveColorConstant();
@@ -1910,14 +1939,14 @@ namespace dxvk {
         }
 
         if (RtxOptions::SubsurfaceScattering::enableTextureMaps()) {
-          trackTexture(opaqueMaterialData.getSubsurfaceTransmittanceTexture(), subsurfaceTransmittanceTextureIndex, hasTexcoords, true, samplerFeedbackStamp);
+          trackTexture(opaqueMaterialData.getSubsurfaceTransmittanceTexture(), subsurfaceTransmittanceTextureIndex, hasTexcoords, true, &samplerFeedbackStamp);
 
           if (isSubsurfaceScatteringDiffusionProfile) {
             // NOTE: reuse of 'subsurfaceSingleScatteringAlbedoTextureIndex' variable!
-            trackTexture(opaqueMaterialData.getSubsurfaceRadiusTexture(), subsurfaceSingleScatteringAlbedoTextureIndex, hasTexcoords, true, samplerFeedbackStamp);
+            trackTexture(opaqueMaterialData.getSubsurfaceRadiusTexture(), subsurfaceSingleScatteringAlbedoTextureIndex, hasTexcoords, true, &samplerFeedbackStamp);
           } else {
-            trackTexture(opaqueMaterialData.getSubsurfaceSingleScatteringAlbedoTexture(), subsurfaceSingleScatteringAlbedoTextureIndex, hasTexcoords, true, samplerFeedbackStamp);
-            trackTexture(opaqueMaterialData.getSubsurfaceThicknessTexture(), subsurfaceThicknessTextureIndex, hasTexcoords, true, samplerFeedbackStamp);
+            trackTexture(opaqueMaterialData.getSubsurfaceSingleScatteringAlbedoTexture(), subsurfaceSingleScatteringAlbedoTextureIndex, hasTexcoords, true, &samplerFeedbackStamp);
+            trackTexture(opaqueMaterialData.getSubsurfaceThicknessTexture(), subsurfaceThicknessTextureIndex, hasTexcoords, true, &samplerFeedbackStamp);
           }
         }
 
@@ -1993,33 +2022,11 @@ namespace dxvk {
     uint32_t normalTextureIndex = kSurfaceMaterialInvalidTextureIndex;
     uint32_t transmittanceTextureIndex = kSurfaceMaterialInvalidTextureIndex;
     uint32_t emissiveColorTextureIndex = kSurfaceMaterialInvalidTextureIndex;
-
-    // NV-DXVK start: sampler feedback for translucent materials
-    // These tracks used to pass no stamp at all, so no translucent material ever had a
-    // feedback leader and every one of its textures stayed at its lowest requested mip
-    // (the GPU side never wrote feedback either; see translucentSurfaceMaterialInteractionCreate).
-    // Elect the leader from the first texture the material has, transmittance first since
-    // it is the colour-carrying texture, mirroring the opaque albedo-first election.
     uint16_t samplerFeedbackStamp = SAMPLER_FEEDBACK_INVALID;
-    {
-      const TextureRef* const feedbackLeaderCandidates[] = {
-        &translucentMaterialData.getTransmittanceTexture(),
-        &translucentMaterialData.getNormalTexture(),
-        &translucentMaterialData.getEmissiveColorTexture(),
-      };
 
-      for (const TextureRef* const candidate : feedbackLeaderCandidates) {
-        if (candidate->getManagedTexture() != nullptr) {
-          samplerFeedbackStamp = candidate->getManagedTexture()->m_samplerFeedbackStamp;
-          break;
-        }
-      }
-    }
-
-    trackTexture(translucentMaterialData.getNormalTexture(), normalTextureIndex, hasTexcoords, true, samplerFeedbackStamp);
-    trackTexture(translucentMaterialData.getTransmittanceTexture(), transmittanceTextureIndex, hasTexcoords, true, samplerFeedbackStamp);
-    trackTexture(translucentMaterialData.getEmissiveColorTexture(), emissiveColorTextureIndex, hasTexcoords, true, samplerFeedbackStamp);
-    // NV-DXVK end
+    trackTexture(translucentMaterialData.getNormalTexture(), normalTextureIndex, hasTexcoords, true, &samplerFeedbackStamp);
+    trackTexture(translucentMaterialData.getTransmittanceTexture(), transmittanceTextureIndex, hasTexcoords, true, &samplerFeedbackStamp);
+    trackTexture(translucentMaterialData.getEmissiveColorTexture(), emissiveColorTextureIndex, hasTexcoords, true, &samplerFeedbackStamp);
 
     return RtTranslucentSurfaceMaterial{
       normalTextureIndex,

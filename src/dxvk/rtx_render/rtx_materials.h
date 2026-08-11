@@ -1008,8 +1008,7 @@ struct RtTranslucentSurfaceMaterial {
     writeGPUHelper(data, offset, glm::packHalf1x16(m_emissiveColorConstant.y));
     writeGPUHelper(data, offset, glm::packHalf1x16(m_emissiveColorConstant.z));
 
-    // data[17]: sampler feedback stamp, so the translucent interaction can report
-    // accessed mips for texture streaming (mirrors the opaque material's stamp).
+    // data[17]: samplerFeedbackStamp
     writeGPUHelperExplicit<2>(data, offset, m_samplerFeedbackStamp);
 
     // data[18 - 31]
@@ -1119,8 +1118,6 @@ private:
   bool m_isThinWalled;
   float m_thinWallThickness;
   bool m_useDiffuseLayer;
-  // Note: Deliberately placed in the alignment hole before m_cachedHash so
-  // sizeof(*this) stays 96 (see the static_assert in updateCachedHash).
   uint16_t m_samplerFeedbackStamp;
 
   XXH64_hash_t m_cachedHash;

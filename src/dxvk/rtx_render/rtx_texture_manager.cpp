@@ -836,7 +836,7 @@ namespace dxvk {
   }
 
   RtxTextureManager::~RtxTextureManager() {
-    FileWatch::get().endThread();
+    FileWatch::get().endThread(this);
 
     delete m_sf.m_cachedGpubuf;
     delete m_sf.m_cachedAssetMipcount;
@@ -1555,7 +1555,7 @@ namespace dxvk {
     }
 
     {
-      FileWatch::get().watchTexture(texture);
+      FileWatch::get().watchTexture(this, texture);
 
       auto l = std::unique_lock{ m_assetHashToTextures_mutex };
       return m_assetHashToTextures.emplace(hash, texture).first->second;

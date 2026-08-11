@@ -133,7 +133,7 @@ struct TranslucentSurfaceMaterial
   // 14-16
   f16vec3 emissiveColorConstant;
 
-  // 17: sampler feedback stamp for texture streaming (SAMPLER_FEEDBACK_INVALID when absent)
+  // 17
   uint16_t samplerFeedbackStamp;
 
   // padding (to keep size matching with MemoryPolymorphicSurfaceMaterial)
