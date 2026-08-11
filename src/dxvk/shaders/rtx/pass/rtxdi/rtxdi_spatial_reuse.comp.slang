@@ -148,9 +148,10 @@ bool applyRtxdiReservoirBoilingFilter(uint2 LocalIndex, inout RTXDI_Reservoir re
 [numthreads(16, 8, 1)]
 void main(int2 threadIndex : SV_DispatchThreadID, uint2 LocalIndex : SV_GroupThreadID)
 {
-  // Out-of-bounds threads exit early. Invalid-surface threads keep going
-  // with an empty reservoir so they can participate in the boiling-filter
-  // barrier; they bail out after the filter call.
+  // Out-of-bounds threads exit early. Inactive (sparse-skipped) and
+  // invalid-surface threads keep going with an empty reservoir so they
+  // can participate in the boiling-filter barrier; they bail out after
+  // the filter call.
   if (any(threadIndex >= cb.camera.resolution))
   {
     return;
@@ -161,31 +162,18 @@ void main(int2 threadIndex : SV_DispatchThreadID, uint2 LocalIndex : SV_GroupThr
     cb.camera.resolution, cb.sparseRenderingArgs, remapped);
   int2 pixelCoordinate = int2(remapped);
 
-  if (!isActive) {
-    if (cb.sparseRenderingArgs.enableRtxdiReuseForInactivePixels) {
-      // Write GBufferLast before early-out (needed by subsequent passes)
-      RAB_Surface surface = RAB_GetGBufferSurface(pixelCoordinate, false);
-      if (!cb.enableReSTIRGI) {
-        imageStore(GBufferLast, pixelCoordinate, RAB_PackLastFrameGBuffer(surface));
-      }
-
-      // Pass through the reservoir from temporal reuse unchanged
-      RTXDI_Reservoir reservoir = RAB_LoadReservoir(pixelCoordinate, RTXDI_GetSpatialInputPage());
-      RAB_StoreReservoir(reservoir, pixelCoordinate, RTXDI_GetSpatialOutputPage());
-
-      // Neutral BSDF factor for inactive pixels
-      BSDFFactor[pixelCoordinate] = vec2(1);
-    }
-    return;
-  }
-
   RAB_Surface surface = RAB_GetGBufferSurface(pixelCoordinate, false);
-  if (!cb.enableReSTIRGI)
+
+  // Only write GBufferLast for active pixels here; inactive pixels write it
+  // below after the boiling-filter barrier, if pass-through is enabled.
+  if (isActive && !cb.enableReSTIRGI)
   {
     imageStore(GBufferLast, pixelCoordinate, RAB_PackLastFrameGBuffer(surface));
   }
 
-  const bool surfaceValid = RAB_IsSurfaceValid(surface);
+  // surfaceValid is always false for inactive pixels so they skip spatial
+  // resampling but still reach the boiling-filter barrier with an empty reservoir.
+  const bool surfaceValid = isActive && RAB_IsSurfaceValid(surface);
 
   RTXDI_Reservoir result = RTXDI_EmptyReservoir();
 
@@ -231,16 +219,37 @@ void main(int2 threadIndex : SV_DispatchThreadID, uint2 LocalIndex : SV_GroupThr
       sparams);
   }
 
-  // Boiling filter -- run before the invalid-surface bail-out so every
-  // in-bounds thread reaches the barrier. Skip partial threadgroups at the
-  // screen edge; their average would be polluted by out-of-bounds threads
-  // that returned early above.
+  // Boiling filter -- run for ALL in-bounds threads including inactive and
+  // invalid-surface ones, so every thread in a full group reaches both
+  // GroupMemoryBarrierWithGroupSync calls. Those threads contribute an empty
+  // reservoir (weight=0, count=0) which does not skew the group average.
+  // Skip partial threadgroups at the screen edge.
   const uint2 groupCornerThreadID = uint2(threadIndex) - LocalIndex;
   const uint2 groupSize = uint2(RTXDI_BOILING_FILTER_GROUP_SIZE_X, RTXDI_BOILING_FILTER_GROUP_SIZE_Y);
   if (cb.enableRtxdiReservoirBoilingFilter &&
       all(groupCornerThreadID + groupSize - 1 < uint2(cb.camera.resolution)))
   {
     applyRtxdiReservoirBoilingFilter(LocalIndex, result);
+  }
+
+  // Inactive-pixel pass-through: deferred until after the boiling-filter
+  // barrier so inactive threads don't leave active threads stuck at the barrier.
+  if (!isActive)
+  {
+    if (cb.sparseRenderingArgs.enableRtxdiReuseForInactivePixels)
+    {
+      if (!cb.enableReSTIRGI) {
+        imageStore(GBufferLast, pixelCoordinate, RAB_PackLastFrameGBuffer(surface));
+      }
+
+      // Pass through the reservoir from temporal reuse unchanged
+      RTXDI_Reservoir reservoir = RAB_LoadReservoir(pixelCoordinate, RTXDI_GetSpatialInputPage());
+      RAB_StoreReservoir(reservoir, pixelCoordinate, RTXDI_GetSpatialOutputPage());
+
+      // Neutral BSDF factor for inactive pixels
+      BSDFFactor[pixelCoordinate] = vec2(1);
+    }
+    return;
   }
 
   if (!surfaceValid)
