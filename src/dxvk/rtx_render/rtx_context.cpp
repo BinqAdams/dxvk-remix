@@ -2763,7 +2763,7 @@ namespace dxvk {
     // (harmless, the 2D menu is low-load).
     const bool cameraValid = getSceneManager().getCamera().isValid(m_device->getCurrentFrameId());
     getSceneManager().trackTexture(albedoOpacity, textureIndex, true, /*async*/ cameraValid,
-                                   SAMPLER_FEEDBACK_INVALID, /*pinFullMips*/ true);
+                                   /*inout_samplerFeedbackStamp*/ nullptr, /*pinFullMips*/ true);
     if (albedoOpacity.isImageEmpty())
       return nullptr;
 
@@ -2793,7 +2793,7 @@ namespace dxvk {
         // full mips or it renders at its lowest mip. async=true keeps the load off
         // the frame thread, so no blocking rtxio flush is scheduled.
         getSceneManager().trackTexture(albedoOpacity, textureIndex, true, /*async*/ true,
-                                       SAMPLER_FEEDBACK_INVALID, /*pinFullMips*/ true);
+                                       /*inout_samplerFeedbackStamp*/ nullptr, /*pinFullMips*/ true);
 
         if (!albedoOpacity.isImageEmpty()) {
           replacementTextureSlot = drawCallState.getMaterialData().colorTextureSlot[0];

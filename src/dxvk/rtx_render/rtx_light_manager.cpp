@@ -589,7 +589,7 @@ namespace dxvk {
         // async=true keeps the load off the frame thread, avoiding the rtxio sync-flush
         // that can stall the cs thread under heavy-combat VRAM pressure (omm-vram-hang).
         sceneManager.trackTexture(activeDomeLight.texture, m_gpuDomeLightArgs.textureIndex, true,
-                                  /*async*/ true, SAMPLER_FEEDBACK_INVALID, /*pinFullMips*/ true);
+                                  /*async*/ true, /*inout_samplerFeedbackStamp*/ nullptr, /*pinFullMips*/ true);
 
         if (m_gpuDomeLightArgs.textureIndex != BINDING_INDEX_INVALID) {
           m_gpuDomeLightArgs.active = true;
