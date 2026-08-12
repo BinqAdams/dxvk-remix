@@ -616,14 +616,6 @@ namespace dxvk {
     }
     // NV-DXVK end
 
-    // NV-DXVK start: DLFG present metering
-    if (devExtensions.nvPresentMetering && m_deviceFeatures.nvPresentMetering.presentMetering) {
-      enabledFeatures.nvPresentMetering.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_METERING_FEATURES_NV;
-      enabledFeatures.nvPresentMetering.pNext = std::exchange(enabledFeatures.core.pNext, &enabledFeatures.nvPresentMetering);
-      enabledFeatures.nvPresentMetering.presentMetering = VK_TRUE;
-    }
-    // NV-DXVK end
-
     // NV-DXVK start: Moved logging to where it is on more recent DXVK to properly show enabled features, also added more information to be logged
     // (Still needs driver version from latest DXVK though at the time of writing this, but we can wait on that since it needs larger changes)
 
@@ -1195,13 +1187,6 @@ namespace dxvk {
       m_deviceFeatures.extShaderAtomicFloat.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT_FEATURES_EXT;
       m_deviceFeatures.extShaderAtomicFloat.pNext = std::exchange(m_deviceFeatures.core.pNext, &m_deviceFeatures.extShaderAtomicFloat);
     }
-
-    // NV-DXVK start: DLFG present metering
-    if (m_deviceExtensions.supports(VK_NV_PRESENT_METERING_EXTENSION_NAME)) {
-      m_deviceFeatures.nvPresentMetering.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_METERING_FEATURES_NV;
-      m_deviceFeatures.nvPresentMetering.pNext = std::exchange(m_deviceFeatures.core.pNext, &m_deviceFeatures.nvPresentMetering);
-    }
-    // NV-DXVK end
 
     m_vki->vkGetPhysicalDeviceFeatures2(m_handle, &m_deviceFeatures.core);
   }
