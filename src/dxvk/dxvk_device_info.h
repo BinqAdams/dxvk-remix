@@ -58,10 +58,6 @@ namespace dxvk {
     VkPhysicalDeviceDiagnosticsConfigFeaturesNV               nvDeviceDiagnosticsConfig;
     VkPhysicalDeviceBufferDeviceAddressFeaturesKHR            khrBufferDeviceAddress;
 
-    // NV-DXVK start: DLFG present metering
-    VkPhysicalDevicePresentMeteringFeaturesNV                  nvPresentMetering;
-    // NV-DXVK end
-
     // NV-DXVK start: opacity micromap
     VkPhysicalDeviceSynchronization2FeaturesKHR               khrSynchronization2;
     // NV-DXVK end
