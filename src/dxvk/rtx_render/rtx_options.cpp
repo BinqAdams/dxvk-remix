@@ -580,7 +580,7 @@ namespace dxvk {
       volumetrics.setQualityLevel(RtxGlobalVolumetrics::Medium);
       enableNrcPreset(NeuralRadianceCache::QualityPreset::Medium);
 
-      DxvkRayReconstruction::model.setDeferred(DxvkRayReconstruction::RayReconstructionModel::CNN);
+      DxvkRayReconstruction::model.setDeferred(DxvkRayReconstruction::RayReconstructionModel::Transformer);
     } else if (graphicsPreset() == GraphicsPreset::Low) {
       lowGraphicsPresetCommonSettings();
 
