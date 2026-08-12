@@ -78,11 +78,7 @@ namespace dxvk::vk {
                                        ) {
     ScopedCpuProfileZone();
 
-    // NV-DXVK start: DLFG integration
-    // The acquired image index is not known yet, so rotate acquire semaphores
-    // by frame slot to support multiple outstanding DLFG acquisitions.
-    sync.acquire = m_semaphores.at(m_frameIndex).acquire;
-    // NV-DXVK end
+    sync = m_semaphores.at(m_frameIndex);
 
     // NV-DXVK start: DLFG integration
     if (isDlfgPresenting) {
@@ -109,19 +105,9 @@ namespace dxvk::vk {
     if (m_acquireStatus != VK_SUCCESS && m_acquireStatus != VK_SUBOPTIMAL_KHR)
       return m_acquireStatus;
 
-    if (isDlfgPresenting) {
-      // DLFG skips the normal present-side rotation below, so advance here
-      // after each successful acquisition to avoid reusing a signaled semaphore.
-      m_frameIndex += 1;
-      m_frameIndex %= m_semaphores.size();
-    } else {
+    if (!isDlfgPresenting) {
       index = m_imageIndex;
     }
-
-    // Present semaphores are tied to swapchain images so that reacquiring an
-    // image guarantees the previous present wait has completed.
-    sync.present = m_semaphores.at(index).present;
-    // NV-DXVK end
 
     return m_acquireStatus;
   }
@@ -138,22 +124,19 @@ namespace dxvk::vk {
   ) {
     ScopedCpuProfileZone();
     // NV-DXVK start: DLFG integration
-    // Wait on the semaphore assigned to this WSI image during acquisition.
-    const uint32_t presentImageIndex = isDlfgPresenting ? imageIndex : m_imageIndex;
-    VkSemaphore presentSemaphore = m_semaphores.at(presentImageIndex).present;
+    PresenterSync sync;
+    
+    sync = m_semaphores.at(m_frameIndex);
     // NV-DXVK end
 
     VkPresentInfoKHR info;
     info.sType              = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-    // Present metering is optional and extends this present through pNext.
     info.pNext              = presentMetering;
     info.waitSemaphoreCount = 1;
-    // Wait until GPU work producing this WSI image has completed.
-    info.pWaitSemaphores    = &presentSemaphore;
+    info.pWaitSemaphores    = &sync.present;
     info.swapchainCount     = 1;
     info.pSwapchains        = &m_swapchain;
     // NV-DXVK start: DLFG integration
-    // Present the same WSI image used to select presentSemaphore above.
     if (isDlfgPresenting) {
       info.pImageIndices = &imageIndex;
     } else {
@@ -180,9 +163,7 @@ namespace dxvk::vk {
       m_frameIndex += 1;
       m_frameIndex %= m_semaphores.size();
 
-      // This synchronization pair is only for the normal path's speculative
-      // acquisition of the next image, so keep it scoped to this block.
-      PresenterSync sync = m_semaphores.at(m_frameIndex);
+      sync = m_semaphores.at(m_frameIndex);
 
       m_acquireStatus = m_vkd->vkAcquireNextImageKHR(m_vkd->device(),
         m_swapchain, std::numeric_limits<uint64_t>::max(),
