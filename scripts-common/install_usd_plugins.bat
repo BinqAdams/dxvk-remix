@@ -37,7 +37,7 @@ for /D %%D in ("%SRC_BASE%\*") do (
         copy /y "%%~L" "!DST!\" >nul
     )
 
-    REM generatedSchema.usda lives at the plugin root (ResourcePath ".").
+    REM Copy generatedSchema.usda
     if exist "!PLUGDIR!\generatedSchema.usda" (
         copy /y "!PLUGDIR!\generatedSchema.usda" "!DST!\" >nul
     )

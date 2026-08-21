@@ -46,6 +46,10 @@
 
 #include "../../d3d9/d3d9_swapchain.h"
 
+#include "../../lssusd/usd_include_begin.h"
+#include <src/usd-plugins/RemixParticleSystem/ParticleSystemAPI.h>
+#include "../../lssusd/usd_include_end.h"
+
 #include <windows.h>
 
 #include <optional>
@@ -781,6 +785,9 @@ namespace {
       desc.restrictVelocityY = static_cast<uint8_t>(info.restrictVelocityY);
       desc.restrictVelocityZ = static_cast<uint8_t>(info.restrictVelocityZ);
 
+      // If this assert fails a new particle system parameter added, please update here.
+      assert(pxr::RemixParticleSystemAPI::GetSchemaAttributeNames(false).size() == 46);
+
       return desc;
     }
 
@@ -1406,7 +1413,6 @@ namespace {
     }
     s_dxvkD3D9 = dxvkD3d9Ex;
     s_dxvkDevice = dxvkDevice;
-    dxvk::g_dxvkDeviceNative = dxvkDevice->GetDXVKDevice().ptr();
     return REMIXAPI_ERROR_CODE_SUCCESS;
   }
 
@@ -1665,7 +1671,6 @@ namespace {
 
   remixapi_ErrorCode REMIXAPI_CALL remixapi_Shutdown(void) {
     if (s_dxvkDevice) {
-      dxvk::g_dxvkDeviceNative = nullptr;
       while (true) {
         ULONG left = s_dxvkDevice->Release();
         if (left == 0) {
@@ -1804,5 +1809,4 @@ extern "C"
     *out_result = interf;
     return REMIXAPI_ERROR_CODE_SUCCESS;
   }
-
 }

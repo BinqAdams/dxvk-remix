@@ -22,7 +22,6 @@
 
 #include "rtx_neural_radiance_cache.h"
 #include "dxvk_device.h"
-#include "dxvk_objects.h"
 #include "rtx.h"
 #include "rtx/pass/common_binding_indices.h"
 #include "rtx_render/rtx_shader_manager.h"
@@ -256,15 +255,14 @@ namespace dxvk {
       const ImVec4 kWhite = ImVec4(1.f, 1.f, 1.f, 1.f);
       const ImVec4 kRed = ImVec4(1.f, 0.f, 0.f, 1.f);
       const ImVec4 kYellow = ImVec4(1.f, 1.f, 0.f, 1.f);
-      const uint32_t numberOfTrainingRecords = getNumberOfTrainingRecords();
 
-      if (numberOfTrainingRecords > 0) {
+      if (m_numberOfTrainingRecords > 0) {
 
         ImVec4 textColor;
 
-        if (numberOfTrainingRecords >= calculateTargetNumTrainingRecords()) {
+        if (m_numberOfTrainingRecords >= calculateTargetNumTrainingRecords()) {
           const float kTargetMaxTolerance = 1.1f;
-          if (numberOfTrainingRecords <= kTargetMaxTolerance * calculateTargetNumTrainingRecords()) {
+          if (m_numberOfTrainingRecords <= kTargetMaxTolerance * calculateTargetNumTrainingRecords()) {
             textColor = kWhite;
           } else {
             textColor = kYellow;
@@ -273,7 +271,7 @@ namespace dxvk {
           textColor = kRed;
         }
            
-        ImGui::TextColored(textColor, "Number of Training Records: %u", numberOfTrainingRecords);
+        ImGui::TextColored(textColor, "Number of Training Records: %u", m_numberOfTrainingRecords);
       } else {
         ImGui::TextColored(kRed, "Number of Training Records: Not Available");
       }
@@ -791,8 +789,6 @@ namespace dxvk {
   }
 
   bool NeuralRadianceCache::onActivation(Rc<DxvkContext>& ctx) {
-    m_isActiveForStats.store(false, std::memory_order_relaxed);
-    m_numberOfTrainingRecords.store(0, std::memory_order_relaxed);
 
     // Fallback to Importance Sampled mode if NRC setup failed.
     // Note: it would be preferable to fallback to ReSTIRGI, but that would require delaying that change to the beginning of the next frame
@@ -811,14 +807,11 @@ namespace dxvk {
     }
 
     m_initSceneBounds = true;
-    m_isActiveForStats.store(true, std::memory_order_relaxed);
 
     return true;
   }
 
   void NeuralRadianceCache::onDeactivation() {
-    m_isActiveForStats.store(false, std::memory_order_relaxed);
-    m_numberOfTrainingRecords.store(0, std::memory_order_relaxed);
     m_nrcCtx = nullptr;
     m_numberOfTrainingRecordsStaging = nullptr;
   }
@@ -896,7 +889,7 @@ namespace dxvk {
     VkDeviceSize offset = (frameIdx % kMaxFramesInFlight) * sizeof(uint32_t);
     uint32_t* gpuMappedUint = reinterpret_cast<uint32_t*>(m_numberOfTrainingRecordsStaging->mapPtr(offset));
 
-    m_numberOfTrainingRecords.store(*gpuMappedUint, std::memory_order_relaxed);
+    m_numberOfTrainingRecords = *gpuMappedUint;
 
     *gpuMappedUint = 0;
   }
@@ -906,12 +899,11 @@ namespace dxvk {
     bool forceReset) {
 
     readAndResetNumberOfTrainingRecords();
-    const uint32_t numberOfTrainingRecords = getNumberOfTrainingRecords();
 
     const uint32_t frameIdx = m_nrcCtx->device()->getCurrentFrameId();
 
     forceReset |= m_resetHistory;
-    forceReset |= numberOfTrainingRecords == 0;
+    forceReset |= m_numberOfTrainingRecords == 0;
     forceReset |= NrcOptions::numFramesToSmoothOutTrainingDimensions() <= 1;
     // We skipped frame(s), reset
     forceReset |= (frameIdx - m_smoothingResetFrameIdx + 1) > (NrcOptions::numFramesToSmoothOutTrainingDimensions() + kMaxFramesInFlight);
@@ -936,7 +928,7 @@ namespace dxvk {
 
       // Calculate smoothed number of training record statistic
       m_smoothedNumberOfTrainingRecords =
-        lerp<float>(m_smoothedNumberOfTrainingRecords, numberOfTrainingRecords, 1.f / numSmoothedFrames);
+        lerp<float>(m_smoothedNumberOfTrainingRecords, m_numberOfTrainingRecords, 1.f / numSmoothedFrames);
 
       assert(numSmoothedFrames <= NrcOptions::numFramesToSmoothOutTrainingDimensions());
 
@@ -1192,19 +1184,3 @@ namespace dxvk {
     m_nrcCtx->endFrame();
   }
 } // namespace dxvk
-
-// See declaration in rtx_neural_radiance_cache.h.
-int remixinternal_GetNrcStatus(uint32_t* outTrainingRecords) {
-  dxvk::DxvkDevice* pDevice = dxvk::g_dxvkDeviceNative;
-  if (pDevice == nullptr) {
-    return -1;
-  }
-  dxvk::NeuralRadianceCache& nrc = pDevice->getCommon()->metaNeuralRadianceCache();
-  if (!nrc.isActiveForStats()) {
-    return 0;
-  }
-  if (outTrainingRecords != nullptr) {
-    *outTrainingRecords = nrc.getNumberOfTrainingRecords();
-  }
-  return 1;
-}
