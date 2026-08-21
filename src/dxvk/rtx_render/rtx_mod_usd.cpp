@@ -58,7 +58,7 @@
 #include <pxr/base/arch/fileSystem.h>
 #include <pxr/base/plug/registry.h>
 #include <pxr/base/plug/plugin.h>
-// ParticleSystemAPI accessed via codeless schema (string-based TfToken API)
+#include <src/usd-plugins/RemixParticleSystem/ParticleSystemAPI.h>
 #include "../../lssusd/usd_include_end.h"
 #include "../util/util_watchdog.h"
 
@@ -533,9 +533,10 @@ std::optional<RtxParticleSystemDesc> UsdMod::Impl::processParticleSystem(Args& a
   using namespace CurveUtils;
   using ColorGradientData = ColorGradientDataT<vec4>;
 
-  if (!sceneDelegate.HasAPI(TfToken("ParticleSystemAPI"))) {
+  if (!sceneDelegate.HasAPI<RemixParticleSystemAPI>()) {
     return std::nullopt;
   }
+  RemixParticleSystemAPI particleSystem(sceneDelegate);
 
   RtxParticleSystemDesc particleInfo;
 
@@ -650,8 +651,9 @@ std::optional<RtxParticleSystemDesc> UsdMod::Impl::processParticleSystem(Args& a
     return combineToVec3(xChannel, hasX, yChannel, hasY, zChannel, hasZ, out, defaultValue, kDefaultAnimationResolution);
   };
 
-  // The schema registry unit test validates exact property names. This counter also
-  // catches additions or removals in the reader itself.
+  // The assert at the end of this function validates that we account for every schema attribute.
+  // The _SafeGetParticlePrimvar macro increments `counter` automatically. For animated properties
+  // read through our curve/gradient helpers (not the macro), we increment manually here.
 
   // Color gradient animated properties: 2 channels (minColor, maxColor) x 2 attrs (times, values) = 4 schema attrs
   bool hasNewMinColor = bakeColorChannel("minColor", particleInfo.minColor, vec4(1.0f));
@@ -694,7 +696,7 @@ std::optional<RtxParticleSystemDesc> UsdMod::Impl::processParticleSystem(Args& a
   _SafeGetParticlePrimvar(float, id, minTargetRotationSpeed, );
   _SafeGetParticlePrimvar(float, id, maxTargetRotationSpeed, );
 
-  // maxSpeed is deprecated (removed from schema); read if present for backward compatibility.
+  // maxSpeed is deprecated (removed from schema); read if present for backward compatibility (do not increment counter).
   {
     float temp {};
     if (_SafeGetPrimvar(sceneDelegate, id, pxr::TfToken("particle:maxSpeed"), temp)) {
@@ -760,7 +762,7 @@ std::optional<RtxParticleSystemDesc> UsdMod::Impl::processParticleSystem(Args& a
   _SafeGetParticlePrimvar(bool, id, restrictVelocityY, particleInfo.);
   _SafeGetParticlePrimvar(bool, id, restrictVelocityZ, particleInfo.);
 
-  assert(counter == lss::kParticleSystemSchemaPropertyCount);
+  assert(RemixParticleSystemAPI::GetSchemaAttributeNames(false).size() == counter);
 
   return particleInfo;
 }
@@ -1702,3 +1704,8 @@ const ModTypeInfo& UsdMod::getTypeInfo() {
 
 } // namespace dxvk
 
+// Export function for unit testing - writes the RemixCategories schema.usda
+// generated from the InstanceCategories enum (see usd_common.h).
+bool writeRemixCategoriesSchemaUsda(const char* outputFilePath) {
+  return dxvk::writeRemixCategoriesSchemaUsda(outputFilePath);
+}

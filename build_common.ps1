@@ -107,9 +107,7 @@ function PerformBuild {
 
 		[bool]$ConfigureOnly = $false,
 
-		[bool]$ShadersOnly = $false,
-
-		[bool]$SkipApics = $false
+		[bool]$ShadersOnly = $false
 	)
 
 	if ( [string]::IsNullOrEmpty("$BuildArch") ) {
@@ -128,9 +126,10 @@ function PerformBuild {
 		if ( $env:BUILD_SENTRY_ENVIRONMENT ) {
 			$mesonArgs += "-Dremix_sentry_environment=$env:BUILD_SENTRY_ENVIRONMENT"
 		}
-		if ( $ShadersOnly -or $SkipApics ) {
+		if ( $ShadersOnly ) {
 			$mesonArgs += "-Ddownload_apics=False"
 		}
+
 		If ( $BuildArch -eq "arm64ec" ) {
 			$mesonArgs += @("--cross-file", "build-wina64ec.txt")
 		} Else { If ( $BuildArch -eq "arm64" ) {
