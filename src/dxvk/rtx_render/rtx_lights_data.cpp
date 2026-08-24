@@ -359,10 +359,11 @@ namespace dxvk {
     output.m_Intensity = LightManager::lightConversionDistantLightFixedIntensity();
     // PK: D3D9-sourced lights default to zero volumetric contribution so game-
     // driven point/spot/directional lights don't show up in the volumetrics
-    // pass. USD and remixapi-authored lights keep the 1.0 default, and any
+    // pass (rtx.lightConversionVolumetricRadianceScale, default 0). USD and
+    // remixapi-authored lights keep the 1.0 default, and any
     // USD replacement that explicitly authors volumetric_radiance_scale wins
     // over this via the WRITE_PARAMETER_MERGE dirty-flag path.
-    output.m_VolumetricRadianceScale = 0.0f;
+    output.m_VolumetricRadianceScale = LightManager::lightConversionVolumetricRadianceScale();
 
     // Note: Changing this code will alter "stable" light hashes from D3D9 and potentially break replacement assets.
 
@@ -401,7 +402,7 @@ namespace dxvk {
     output.m_Color = Vector3(light.Diffuse.r, light.Diffuse.g, light.Diffuse.b) / originalBrightness;
     // PK: see createFromDirectional for rationale — D3D9 lights default to
     // zero volumetric scale so they don't light the volumetric fog pass.
-    output.m_VolumetricRadianceScale = 0.0f;
+    output.m_VolumetricRadianceScale = LightManager::lightConversionVolumetricRadianceScale();
 
     XXH64_hash_t shapingHash = 0;
 
