@@ -230,6 +230,11 @@ private:
                   args.minValue = 0.0f, args.maxValue = kPi);
   RTX_OPTION("rtx", float, lightConversionMaxIntensity, FLT_MAX, "The highest intensity value a converted light can have.");
   RTX_OPTION("rtx", float, lightConversionIntensityFactor, 1.f, "Scales the converted light intensities.");
+  RTX_OPTION_ARGS("rtx", float, lightConversionVolumetricRadianceScale, 0.f,
+             "Volumetric radiance scale applied to legacy (D3D9-sourced) lights during conversion (point, spot and directional).\n"
+             "0 keeps converted game lights out of the volumetrics pass entirely; 1 matches the default of USD/remixapi-authored lights.\n"
+             "USD replacements that explicitly author volumetric_radiance_scale still override this per light.",
+             args.minValue = 0.0f, args.maxValue = 1000.0f);
   RTX_OPTION("rtx", bool, enableLegacyRectLightConeShaping, false,
              "If true, restores the legacy cos(angle) * aspectRatio formula for RectLight cone shaping. "
              "Enable this only to preserve the look of existing scenes that were authored against the legacy behavior. "
