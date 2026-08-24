@@ -135,6 +135,9 @@ namespace dxvk {
       lightSettingsDirty |= RemixGui::DragFloat("Fixed Angle", &lightConversionDistantLightFixedAngleObject(), 0.01f, 0.0f, kPi, "%.4f rad", ImGuiSliderFlags_AlwaysClamp);
       ImGui::EndDisabled();
 
+      // Applies to all converted (D3D9-sourced) light types, so it lives outside the per-type disabled blocks.
+      lightSettingsDirty |= RemixGui::DragFloat("Volumetric Radiance Scale", &lightConversionVolumetricRadianceScaleObject(), 0.01f, 0.0f, 1000.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+
       separator();
 
       ImGui::Text("Rectangle Light settings");
