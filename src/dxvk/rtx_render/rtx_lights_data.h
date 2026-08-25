@@ -68,6 +68,10 @@ namespace dxvk {
     // Are we overriding an existing game light?
     bool lightOverride() const { return m_isOverrideLight; }
 
+    // Did this light's stable hash come from the application-stamped Diffuse.a identity
+    // (rtx.lightConversionIdentityFromDiffuseAlpha) instead of its position?
+    bool isIdentityHashed() const { return m_identityHashed; }
+
     void setTransform(const pxr::GfMatrix4f& localToObject) {
       extractTransform(&localToObject);
     }
@@ -130,6 +134,7 @@ namespace dxvk {
     Flags<DirtyFlags> m_dirty{};
     LightType m_lightType = Unknown;
     XXH64_hash_t m_cachedHash = kEmptyHash;
+    bool m_identityHashed = false;
     // NOTE: Just add params for these without USD deserializer
     Vector3 m_position = Vector3(0.f);
     Vector3 m_xAxis = Vector3(1.f, 0.f, 0.f);
