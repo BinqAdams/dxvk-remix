@@ -721,7 +721,9 @@ namespace dxvk {
     if (foundLightIt != m_lights.end()) {
       // Ignore changes in the same frame
       if (foundLightIt->second.getFrameLastTouched() != m_device->getCurrentFrameId()) {
-        if (!rtLight.isDynamic && !suppressLightKeeping()) {
+        // Identity-from-Diffuse.a mode: a MOVING light exact-hash-matches here, so the
+        // sleep defeat device below would freeze its position - always take the update path.
+        if (!rtLight.isDynamic && !suppressLightKeeping() && !lightConversionIdentityFromDiffuseAlpha()) {
           // Update the light - its an exact hash match (meaning it's static)
           const uint32_t isStaticCount = foundLightIt->second.isStaticCount;
 
