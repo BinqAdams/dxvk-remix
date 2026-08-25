@@ -2181,25 +2181,24 @@ namespace dxvk {
     // Build identity hash from the light's stable hash + position. Used by
     // both the replacement and the toggle-off cleanup paths below; must stay
     // in sync between them so they target the same RI.
-    // Identity-from-Diffuse.a lights: the stable hash is already the full identity and the
-    // light may move, so folding position back in would churn the RI every frame - skip it.
+    // Note: position stays folded in even for identity-from-Diffuse.a lights - it is the
+    // per-INSTANCE disambiguator. Several coexisting lights may share one stamped identity
+    // (one USD over per light class); without the fold they collapse into a single RI and
+    // only the last-processed instance keeps its light (observed in game 2026-08-25). The
+    // stable identity is only the replacement LOOKUP key (getInitialHash), never the RI key.
     const XXH64_hash_t lightAssetHash = rtLight.getInitialHash();
     const Vector3 lightPos = rtLight.getPosition();
-    const XXH64_hash_t lightIdHash = lightData->isIdentityHashed()
-      ? lightAssetHash
-      : XXH64(&lightPos, sizeof(Vector3), lightAssetHash);
+    const XXH64_hash_t lightIdHash = XXH64(&lightPos, sizeof(Vector3), lightAssetHash);
 
     if (pReplacements) {
       const Matrix4 lightTransform = LightUtils::getLightTransform(light);
 
-      // Build identity hash from the light's stable hash + position (position skipped for
-      // identity-from-Diffuse.a lights; must mirror the computation above)
+      // Build identity hash from the light's stable hash + position (must mirror the
+      // computation above; see the per-instance-disambiguator note there)
       const XXH64_hash_t lightAssetHash = rtLight.getInitialHash();
       const Vector3 lightPos = rtLight.getPosition();
       XXH64_hash_t lightIdHash = lightAssetHash;
-      if (!lightData->isIdentityHashed()) {
-        lightIdHash = XXH64(&lightPos, sizeof(Vector3), lightIdHash);
-      }
+      lightIdHash = XXH64(&lightPos, sizeof(Vector3), lightIdHash);
 
       const ReplacementInstance::LookupKey lightKey { lightIdHash, lightAssetHash, kEmptyHash, kEmptyHash, lightPos, lightTransform };
       ReplacementInstance* replacementInstance = m_drawCallTracker.findOrCreateReplacementInstance(lightKey);
