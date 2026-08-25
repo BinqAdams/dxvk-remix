@@ -2181,18 +2181,25 @@ namespace dxvk {
     // Build identity hash from the light's stable hash + position. Used by
     // both the replacement and the toggle-off cleanup paths below; must stay
     // in sync between them so they target the same RI.
+    // Identity-from-Diffuse.a lights: the stable hash is already the full identity and the
+    // light may move, so folding position back in would churn the RI every frame - skip it.
     const XXH64_hash_t lightAssetHash = rtLight.getInitialHash();
     const Vector3 lightPos = rtLight.getPosition();
-    const XXH64_hash_t lightIdHash = XXH64(&lightPos, sizeof(Vector3), lightAssetHash);
+    const XXH64_hash_t lightIdHash = lightData->isIdentityHashed()
+      ? lightAssetHash
+      : XXH64(&lightPos, sizeof(Vector3), lightAssetHash);
 
     if (pReplacements) {
       const Matrix4 lightTransform = LightUtils::getLightTransform(light);
 
-      // Build identity hash from the light's stable hash + position
+      // Build identity hash from the light's stable hash + position (position skipped for
+      // identity-from-Diffuse.a lights; must mirror the computation above)
       const XXH64_hash_t lightAssetHash = rtLight.getInitialHash();
       const Vector3 lightPos = rtLight.getPosition();
       XXH64_hash_t lightIdHash = lightAssetHash;
-      lightIdHash = XXH64(&lightPos, sizeof(Vector3), lightIdHash);
+      if (!lightData->isIdentityHashed()) {
+        lightIdHash = XXH64(&lightPos, sizeof(Vector3), lightIdHash);
+      }
 
       const ReplacementInstance::LookupKey lightKey { lightIdHash, lightAssetHash, kEmptyHash, kEmptyHash, lightPos, lightTransform };
       ReplacementInstance* replacementInstance = m_drawCallTracker.findOrCreateReplacementInstance(lightKey);

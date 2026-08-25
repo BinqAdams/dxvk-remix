@@ -235,6 +235,11 @@ private:
              "0 keeps converted game lights out of the volumetrics pass entirely; 1 matches the default of USD/remixapi-authored lights.\n"
              "USD replacements that explicitly author volumetric_radiance_scale still override this per light.",
              args.minValue = 0.0f, args.maxValue = 1000.0f);
+  RTX_OPTION("rtx", bool, lightConversionIdentityFromDiffuseAlpha, false,
+             "When enabled, a converted D3D9 point or spot light whose D3DLIGHT9 Diffuse.a is NOT the conventional 1.0 derives its stable hash from that Diffuse.a value instead of the light's Position (spot shaping still contributes to the hash). Lights carrying the default Diffuse.a of 1.0 keep the legacy position-based hash, so this is per-light opt-in.\n"
+             "Diffuse.a is not consumed by Remix's light conversion and is discarded by the D3D9 fixed-function raster path, so it is visually inert - the application can stamp a distinct value per logical light to obtain a frame-stable, targetable identity for lights that move (USD light replacements, per-light hash lists).\n"
+             "Simultaneously-live lights sharing the same Diffuse.a (and shaping, for spots) collapse into a single light entry, so the application MUST assign distinct values to lights it wants kept separate. Light sleeping is bypassed while this mode is active so moving stamped lights keep updating on an exact-hash match.\n"
+             "Directional light hashes are unaffected (they never included position).");
   RTX_OPTION("rtx", bool, enableLegacyRectLightConeShaping, false,
              "If true, restores the legacy cos(angle) * aspectRatio formula for RectLight cone shaping. "
              "Enable this only to preserve the look of existing scenes that were authored against the legacy behavior. "

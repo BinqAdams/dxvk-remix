@@ -451,7 +451,19 @@ namespace dxvk {
     // Expects an un-altered position directly from the D3DLIGHT9 Position, and a Stable Light Shaping structure with its primaryAxis member
     // directly derived from the D3DLIGHT9 Direction (again a legacy artifact caused by not normalizing this in our initial implementation).
     // Note: Radiance not included to somewhat uniquely identify lights when constructed from D3D9 Lights.
-    output.m_cachedHash = XXH64(&originalPosition[0], sizeof(originalPosition), output.m_cachedHash);
+    if (LightManager::lightConversionIdentityFromDiffuseAlpha() && light.Diffuse.a != 1.0f) {
+      // Identity mode, per-light opt-in: a Diffuse.a other than the D3D9-conventional 1.0
+      // is an application-stamped identity - substitute it for the position so lights that
+      // move keep a frame-stable, targetable hash. Diffuse.a is not read anywhere else in
+      // the conversion and is discarded by the fixed-function raster path. Lights carrying
+      // the default 1.0 keep the legacy position hash (so untouched game lights, e.g. many
+      // simultaneous same-colored level lights, never collapse into one entry).
+      const float identityAlpha = light.Diffuse.a;
+      output.m_cachedHash = XXH64(&identityAlpha, sizeof(identityAlpha), output.m_cachedHash);
+      output.m_identityHashed = true;
+    } else {
+      output.m_cachedHash = XXH64(&originalPosition[0], sizeof(originalPosition), output.m_cachedHash);
+    }
     output.m_cachedHash = XXH64(&legacyStableRadius, sizeof(legacyStableRadius), output.m_cachedHash);
     output.m_cachedHash = XXH64(&output.m_cachedHash, sizeof(output.m_cachedHash), shapingHash);
 
