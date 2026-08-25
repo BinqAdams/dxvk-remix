@@ -70,9 +70,14 @@ function SetupVS {
 	#  Write-Host "Visual Studio Command Prompt variables already set." -ForegroundColor Yellow
 	#} Else {
 	  # Load VC vars
+	  # PK-diag: invoke vcvarsall.bat by ABSOLUTE path. The bare-name invocation
+	  # after Push-Location silently failed ("'vcvarsall.bat' is not recognized")
+	  # under shells that resolve the program against the original cwd; meson then
+	  # auto-activated a host-arch (x64) MSVC env even for the x86 leg, so a fresh
+	  # _compRelease_x86 configured as x64 and built server targets only.
 	  Push-Location "${vsPath}\VC\Auxiliary\Build"
 
-	  cmd /c "vcvarsall.bat ${vcvarsArgs} &set" |
+	  cmd /c "`"${vsPath}\VC\Auxiliary\Build\vcvarsall.bat`" ${vcvarsArgs} &set" |
 		ForEach-Object {
 		  # Skip lines starting with '=' (Windows pseudo-variables like '=C:=...') and
 		  # preserve values containing '=' (e.g. CI_MERGE_REQUEST_DESCRIPTION).
