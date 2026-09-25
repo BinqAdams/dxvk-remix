@@ -26,7 +26,7 @@
 [submodule "submodules/rtxdi"]
 	path = submodules/rtxdi
 	url = https://github.com/BinqAdams/RTXDI.git
-	branch = fix/megalights-outlier-clamp
+	branch = fix/megalights-outlier-clamp-on-8361620
 [submodule "submodules/rtxcr"]
 	path = submodules/rtxcr
 	url = https://github.com/NVIDIA-RTX/RTXCR-Material-Library.git
