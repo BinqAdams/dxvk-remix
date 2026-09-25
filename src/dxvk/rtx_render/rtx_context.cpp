@@ -2794,7 +2794,7 @@ namespace dxvk {
     // hash, demand-load its albedo, and return the resident image view. The
     // rasterized UI/menu path otherwise binds the original game texture, so a
     // registered replacement loads (shows in the dev menu) but is never sampled.
-    MaterialData* replacementMaterial =
+    std::shared_ptr<MaterialData> replacementMaterial =
       getSceneManager().getAssetReplacer()->getReplacementMaterial(textureHash);
     if (replacementMaterial == nullptr || replacementMaterial->getType() != MaterialDataType::Opaque)
       return nullptr;

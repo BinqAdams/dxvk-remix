@@ -815,6 +815,7 @@ namespace dxvk {
         if (failed) { if (!reasons.empty()) reasons += ','; reasons += name; }
       };
       add(!RtxOptions::enablePreservePath(), "pathDisabled");
+      add(replacementInstance->prims.empty(), "noPrims");
       if (!replacementInstance->dirtyFlags.isClear()) {
         // Decode which lookup-drift bit(s) set the RI dirty, and for the Other
         // catch-all, name the actual churning identity input by comparing this
@@ -856,8 +857,8 @@ namespace dxvk {
                               " matNew=", legacyMaterialIdentityHash, std::dec);
       }
       if (!activeReplacementsMatch) {
-        detail += str::format(" replOld=", replacementInstance->activeReplacements,
-                              " replNew=", (const void*)pReplacements);
+        detail += str::format(" replOld=", (const void*)replacementInstance->activeReplacements.get(),
+                              " replNew=", (const void*)pReplacements.get());
       }
       Logger::info(str::format("[GeomLife] ", currentFrameId, " PRESERVE-DROP hash=",
           std::hex, input.getHash(RtxOptions::geometryAssetHashRule()), std::dec,
